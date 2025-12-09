@@ -426,6 +426,15 @@ def guest():
 def search_studies():
     """Search for clinical trials based on filters"""
     filters = request.json
+    
+    # Handle intervention - convert string to array if needed
+    if filters.get('intervention'):
+        if isinstance(filters['intervention'], str):
+            # Split comma-separated values
+            filters['intervention'] = [i.strip() for i in filters['intervention'].split(',') if i.strip()]
+        elif not isinstance(filters['intervention'], list):
+            filters['intervention'] = []
+    
     use_semantic = filters.get('useSemanticSearch', False)
 
     # If semantic search is requested and available
@@ -1207,9 +1216,15 @@ def build_query_from_filters(filters):
             '$regex': filters['condition'], '$options': 'i'
         }
     
-    # Intervention search (array match)
-    if filters.get('intervention') and len(filters['intervention']) > 0:
-        query['interventions'] = {'$in': filters['intervention']}
+    # Intervention search (handle both string and array)
+    intervention = filters.get('intervention')
+    if intervention:
+        # If it's a string, convert to array (supports comma-separated values)
+        if isinstance(intervention, str):
+            intervention = [i.strip() for i in intervention.split(',') if i.strip()]
+        # If it's an array and not empty
+        if isinstance(intervention, list) and len(intervention) > 0:
+            query['interventions'] = {'$in': intervention}
     
     # Status filter
     if filters.get('status') and len(filters['status']) > 0:
