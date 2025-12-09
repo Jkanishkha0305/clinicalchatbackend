@@ -43,13 +43,39 @@ def count_tokens(messages, model="gpt-4o-mini"):
 # =============================================================================
 
 app = Flask(__name__)
-CORS(app)
 
-# MongoDB connection - use environment variable for production
-MONGODB_URI = os.getenv('MONGODB_PROD_URL', 'mongodb://localhost:27017/')
-client = MongoClient(MONGODB_URI)
-db = client['clinical_trials']
-collection = db['studies']
+# CORS configuration - allow frontend origin
+CLIENT_HOST = os.getenv('CLIENT_HOST', 'http://localhost:3000')
+CORS(app, origins=[CLIENT_HOST, 'http://localhost:3000', 'https://clinicalchat.vercel.app'])
+
+# MongoDB connection - check multiple environment variable names for compatibility
+MONGODB_URI = os.getenv('MONGO_URL') or os.getenv('MONGODB_PROD_URL') or os.getenv('MONGODB_URI')
+if not MONGODB_URI:
+    print("⚠️  WARNING: MongoDB URI not found in environment variables")
+    print(f"Available env vars containing 'MONGO': {[k for k in os.environ.keys() if 'MONGO' in k.upper()]}")
+    MONGODB_URI = 'mongodb://localhost:27017/'
+    print(f"Falling back to localhost: {MONGODB_URI}")
+else:
+    print(f"🔌 Using MongoDB URI from environment")
+
+print(f"🔌 Connecting to MongoDB: {MONGODB_URI[:50]}...")
+
+try:
+    client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    # Validate connection on startup
+    client.server_info()
+    print("✓ MongoDB connected successfully!")
+except Exception as e:
+    print(f"✗ MongoDB connection failed: {str(e)}")
+    print("⚠️  WARNING: Running without database connection. Some features may not work.")
+    # Continue anyway (graceful degradation)
+
+# Use environment variables for database and collection names
+MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'clinical_trials')
+MONGO_COLLECTION_NAME = os.getenv('MONGO_COLLECTION_NAME', 'studies')
+
+db = client[MONGO_DB_NAME]
+collection = db[MONGO_COLLECTION_NAME]
 users_collection = db['users']  # For authentication
 
 # OpenAI setup - prioritize .env file
