@@ -130,8 +130,19 @@ try:
     chroma_port = os.getenv('CHROMA_PORT', '8000')
     
     if chroma_host:
-        # Use client-server mode (for production with separate ChromaDB service)
-        chroma_client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port))
+        # Use client-server mode (for production with separate ChromaDB service or ChromaDB Cloud)
+        chroma_auth_token = os.getenv('CHROMA_AUTH_TOKEN') or os.getenv('CHROMA_API_KEY')
+        
+        # Create HttpClient with optional authentication
+        if chroma_auth_token:
+            chroma_client = chromadb.HttpClient(
+                host=chroma_host, 
+                port=int(chroma_port),
+                headers={"Authorization": f"Bearer {chroma_auth_token}"}
+            )
+        else:
+            chroma_client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port))
+        
         try:
             chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
             print(f"✓ ChromaDB connected to {chroma_host}:{chroma_port}: {chroma_collection.count()} embeddings")
