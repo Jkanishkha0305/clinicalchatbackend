@@ -125,31 +125,51 @@ chroma_collection = None
 chroma_client = None
 
 try:
-    # Check if ChromaDB is configured via client-server mode (production)
-    chroma_host = os.getenv('CHROMA_HOST')
-    chroma_port = os.getenv('CHROMA_PORT', '8000')
+    # Check if ChromaDB Cloud is configured (preferred for production)
+    chroma_cloud_api_key = os.getenv('CHROMA_CLOUD_API_KEY') or os.getenv('CHROMA_API_KEY')
+    chroma_cloud_tenant = os.getenv('CHROMA_CLOUD_TENANT')
+    chroma_cloud_database = os.getenv('CHROMA_CLOUD_DATABASE', 'clinicalchat')
     
-    if chroma_host:
-        # Use client-server mode (for production with separate ChromaDB service or ChromaDB Cloud)
-        chroma_auth_token = os.getenv('CHROMA_AUTH_TOKEN') or os.getenv('CHROMA_API_KEY')
-        
-        # Create HttpClient with optional authentication
-        if chroma_auth_token:
-            chroma_client = chromadb.HttpClient(
-                host=chroma_host, 
-                port=int(chroma_port),
-                headers={"Authorization": f"Bearer {chroma_auth_token}"}
-            )
-        else:
-            chroma_client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port))
-        
+    if chroma_cloud_api_key and chroma_cloud_tenant:
+        # Use ChromaDB Cloud (recommended for production)
+        chroma_client = chromadb.CloudClient(
+            api_key=chroma_cloud_api_key,
+            tenant=chroma_cloud_tenant,
+            database=chroma_cloud_database
+        )
         try:
             chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-            print(f"✓ ChromaDB connected to {chroma_host}:{chroma_port}: {chroma_collection.count()} embeddings")
+            print(f"✓ ChromaDB Cloud connected (database: {chroma_cloud_database}): {chroma_collection.count()} embeddings")
         except Exception as e:
-            print(f"⚠️  ChromaDB collection not found: {str(e)}")
+            print(f"⚠️  ChromaDB Cloud collection not found: {str(e)}")
             print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
             chroma_collection = None
+    else:
+        # Fallback to client-server mode (for self-hosted ChromaDB)
+        chroma_host = os.getenv('CHROMA_HOST')
+        chroma_port = os.getenv('CHROMA_PORT', '8000')
+        
+        if chroma_host:
+            # Use client-server mode (for production with separate ChromaDB service)
+            chroma_auth_token = os.getenv('CHROMA_AUTH_TOKEN') or os.getenv('CHROMA_API_KEY')
+            
+            # Create HttpClient with optional authentication
+            if chroma_auth_token:
+                chroma_client = chromadb.HttpClient(
+                    host=chroma_host, 
+                    port=int(chroma_port),
+                    headers={"Authorization": f"Bearer {chroma_auth_token}"}
+                )
+            else:
+                chroma_client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port))
+            
+            try:
+                chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
+                print(f"✓ ChromaDB connected to {chroma_host}:{chroma_port}: {chroma_collection.count()} embeddings")
+            except Exception as e:
+                print(f"⚠️  ChromaDB collection not found: {str(e)}")
+                print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
+                chroma_collection = None
     else:
         # Use persistent client mode (local or with writable path)
         # Try multiple paths: custom path, /tmp (production writable), then local
