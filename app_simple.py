@@ -121,27 +121,29 @@ else:
     print("⚠️  Groq API key not found (optional)")
 
 # Initialize ChromaDB for semantic search
+# Try to use ChromaDB Cloud first, fallback to other methods
 chroma_collection = None
 chroma_client = None
 
 try:
     # Check if ChromaDB Cloud is configured (preferred for production)
-    chroma_cloud_api_key = os.getenv('CHROMA_CLOUD_API_KEY') or os.getenv('CHROMA_API_KEY')
-    chroma_cloud_tenant = os.getenv('CHROMA_CLOUD_TENANT')
-    chroma_cloud_database = os.getenv('CHROMA_CLOUD_DATABASE', 'clinicalchat')
+    chroma_api_key = os.getenv('CHROMA_API_KEY')
+    chroma_tenant = os.getenv('CHROMA_TENANT')
+    chroma_database = os.getenv('CHROMA_DATABASE', 'clinicalchat')
     
-    if chroma_cloud_api_key and chroma_cloud_tenant:
+    if chroma_api_key and chroma_tenant:
         # Use ChromaDB Cloud (recommended for production)
         chroma_client = chromadb.CloudClient(
-            api_key=chroma_cloud_api_key,
-            tenant=chroma_cloud_tenant,
-            database=chroma_cloud_database
+            api_key=chroma_api_key,
+            tenant=chroma_tenant,
+            database=chroma_database
         )
         try:
-            chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-            print(f"✓ ChromaDB Cloud connected (database: {chroma_cloud_database}): {chroma_collection.count()} embeddings")
+            chroma_collection = chroma_client.get_or_create_collection(name='clinical_trials_embeddings')
+            count = chroma_collection.count()
+            print(f"✓ ChromaDB Cloud connected (database: {chroma_database}): {count} embeddings")
         except Exception as e:
-            print(f"⚠️  ChromaDB Cloud collection not found: {str(e)}")
+            print(f"⚠️  ChromaDB Cloud connection error: {str(e)}")
             print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
             chroma_collection = None
     else:
@@ -151,7 +153,7 @@ try:
         
         if chroma_host:
             # Use client-server mode (for production with separate ChromaDB service)
-            chroma_auth_token = os.getenv('CHROMA_AUTH_TOKEN') or os.getenv('CHROMA_API_KEY')
+            chroma_auth_token = os.getenv('CHROMA_AUTH_TOKEN')
             
             # Create HttpClient with optional authentication
             if chroma_auth_token:
@@ -211,9 +213,9 @@ try:
 except Exception as e:
     print(f"⚠️  ChromaDB initialization failed: {str(e)}")
     print("   Semantic search will be disabled. To enable:")
-    print("   - Option 1: Set CHROMA_HOST and CHROMA_PORT for client-server mode (recommended for production)")
-    print("   - Option 2: Set CHROMADB_PATH to a writable directory")
-    print("   - Option 3: Ensure /tmp is writable (used automatically in production)")
+    print("   - Option 1: Set CHROMA_API_KEY, CHROMA_TENANT, and CHROMA_DATABASE for ChromaDB Cloud (recommended)")
+    print("   - Option 2: Set CHROMA_HOST and CHROMA_PORT for client-server mode")
+    print("   - Option 3: Set CHROMADB_PATH to a writable directory")
     chroma_collection = None
 
 # =============================================================================
@@ -1200,6 +1202,52 @@ def soa_composer_endpoint():
     except Exception as e:
         print(f"Error in SoA composition: {str(e)}")
         return jsonify({'error': f'SoA composition failed: {str(e)}'}), 500
+
+
+@app.route('/api/documents', methods=['POST'])
+def add_documents():
+    """Add documents to ChromaDB Cloud collection"""
+    try:
+        request_body = request.get_json()
+        ids = request_body.get('ids')
+        documents = request_body.get('documents')
+        metadatas = request_body.get('metadatas', [])
+        embeddings = request_body.get('embeddings')  # Optional
+        
+        if not ids or not documents:
+            return jsonify({'error': 'ids and documents are required'}), 400
+        
+        if len(ids) != len(documents):
+            return jsonify({'error': 'ids and documents must have the same length'}), 400
+        
+        # Use ChromaDB Cloud if available
+        if chroma_collection is None:
+            return jsonify({'error': 'ChromaDB not available. Please configure CHROMA_API_KEY, CHROMA_TENANT, and CHROMA_DATABASE'}), 503
+        
+        # Prepare add parameters
+        add_params = {
+            'ids': ids,
+            'documents': documents
+        }
+        
+        if metadatas and len(metadatas) == len(ids):
+            add_params['metadatas'] = metadatas
+        
+        if embeddings and len(embeddings) == len(ids):
+            add_params['embeddings'] = embeddings
+        
+        # Add to collection
+        chroma_collection.add(**add_params)
+        
+        return jsonify({
+            'message': 'Documents added successfully',
+            'ids': ids,
+            'count': len(ids)
+        }), 200
+        
+    except Exception as e:
+        print(f"Error adding documents: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 
 # =============================================================================
