@@ -45,8 +45,9 @@ def count_tokens(messages, model="gpt-4o-mini"):
 app = Flask(__name__)
 CORS(app)
 
-# MongoDB connection
-client = MongoClient('mongodb://localhost:27017/')
+# MongoDB connection - use environment variable for production
+MONGODB_URI = os.getenv('MONGODB_PROD_URL', 'mongodb://localhost:27017/')
+client = MongoClient(MONGODB_URI)
 db = client['clinical_trials']
 collection = db['studies']
 users_collection = db['users']  # For authentication
@@ -94,9 +95,11 @@ else:
 
 # Initialize ChromaDB for semantic search
 try:
-    chroma_client = chromadb.PersistentClient(path='./chromadb_data')
+    # Use /tmp for Railway (writable), ./chromadb_data for local
+    chroma_path = os.getenv('CHROMADB_PATH', './chromadb_data')
+    chroma_client = chromadb.PersistentClient(path=chroma_path)
     chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-    print(f"✓ ChromaDB loaded: {chroma_collection.count()} embeddings")
+    print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
 except Exception as e:
     print(f"⚠️  ChromaDB not available: {str(e)}")
     print("   Run generate_embeddings.py to enable semantic search")
