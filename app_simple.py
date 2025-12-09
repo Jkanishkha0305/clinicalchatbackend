@@ -170,44 +170,44 @@ try:
                 print(f"⚠️  ChromaDB collection not found: {str(e)}")
                 print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
                 chroma_collection = None
-    else:
-        # Use persistent client mode (local or with writable path)
-        # Try multiple paths: custom path, /tmp (production writable), then local
-        chroma_path = os.getenv('CHROMADB_PATH')
-        is_production = os.getenv('FLASK_ENV') == 'production' or os.getenv('NODE_ENV') == 'production'
-        
-        if not chroma_path:
-            # In production, use /tmp which is writable (ephemeral but works)
-            # For local development, use ./chromadb_data
-            if is_production:
-                chroma_path = '/tmp/chromadb_data'
-                print(f"🔧 Using /tmp for ChromaDB (production mode)")
-                
-                # Try to copy embeddings from read-only location if available
-                readonly_paths = ['./chromadb_data', '/app/chromadb_data', '/chromadb_data']
-                for readonly_path in readonly_paths:
-                    if os.path.exists(readonly_path) and os.path.isdir(readonly_path):
-                        try:
-                            if os.path.exists(chroma_path):
-                                shutil.rmtree(chroma_path)
-                            shutil.copytree(readonly_path, chroma_path)
-                            print(f"✓ Copied ChromaDB data from {readonly_path} to {chroma_path}")
-                            break
-                        except Exception as copy_error:
-                            print(f"⚠️  Could not copy from {readonly_path}: {str(copy_error)}")
-                            continue
-            else:
-                chroma_path = './chromadb_data'
-        
-        chroma_client = chromadb.PersistentClient(path=chroma_path)
-        try:
-            chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-            print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
-        except Exception as e:
-            print(f"⚠️  ChromaDB collection not found at {chroma_path}: {str(e)}")
-            print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
-            print("   Run generate_embeddings.py to create embeddings")
-            chroma_collection = None
+        else:
+            # Use persistent client mode (local or with writable path)
+            # Try multiple paths: custom path, /tmp (production writable), then local
+            chroma_path = os.getenv('CHROMADB_PATH')
+            is_production = os.getenv('FLASK_ENV') == 'production' or os.getenv('NODE_ENV') == 'production'
+            
+            if not chroma_path:
+                # In production, use /tmp which is writable (ephemeral but works)
+                # For local development, use ./chromadb_data
+                if is_production:
+                    chroma_path = '/tmp/chromadb_data'
+                    print(f"🔧 Using /tmp for ChromaDB (production mode)")
+                    
+                    # Try to copy embeddings from read-only location if available
+                    readonly_paths = ['./chromadb_data', '/app/chromadb_data', '/chromadb_data']
+                    for readonly_path in readonly_paths:
+                        if os.path.exists(readonly_path) and os.path.isdir(readonly_path):
+                            try:
+                                if os.path.exists(chroma_path):
+                                    shutil.rmtree(chroma_path)
+                                shutil.copytree(readonly_path, chroma_path)
+                                print(f"✓ Copied ChromaDB data from {readonly_path} to {chroma_path}")
+                                break
+                            except Exception as copy_error:
+                                print(f"⚠️  Could not copy from {readonly_path}: {str(copy_error)}")
+                                continue
+                else:
+                    chroma_path = './chromadb_data'
+            
+            chroma_client = chromadb.PersistentClient(path=chroma_path)
+            try:
+                chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
+                print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
+            except Exception as e:
+                print(f"⚠️  ChromaDB collection not found at {chroma_path}: {str(e)}")
+                print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
+                print("   Run generate_embeddings.py to create embeddings")
+                chroma_collection = None
 except Exception as e:
     print(f"⚠️  ChromaDB initialization failed: {str(e)}")
     print("   Semantic search will be disabled. To enable:")
@@ -1244,11 +1244,12 @@ def build_query_from_filters(filters):
 
 
 if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5034))  # Use 5034 for local testing (5033 is Node backend)
     print("=" * 60)
     print("Clinical Trials Search Application")
     print("=" * 60)
     print(f"MongoDB: {collection.count_documents({}):,} studies loaded")
     print("Starting server...")
-    print("Open your browser: http://localhost:5033")
+    print(f"Open your browser: http://localhost:{port}")
     print("=" * 60)
-    app.run(debug=True, port=5033)
+    app.run(debug=True, port=port)
