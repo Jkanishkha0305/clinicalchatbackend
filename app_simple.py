@@ -15,6 +15,7 @@ import bcrypt
 import secrets
 import itertools
 import re
+import shutil
 
 # Load environment variables from .env file
 load_dotenv()
@@ -120,15 +121,68 @@ else:
     print("⚠️  Groq API key not found (optional)")
 
 # Initialize ChromaDB for semantic search
+chroma_collection = None
+chroma_client = None
+
 try:
-    # Use /tmp for Railway (writable), ./chromadb_data for local
-    chroma_path = os.getenv('CHROMADB_PATH', './chromadb_data')
-    chroma_client = chromadb.PersistentClient(path=chroma_path)
-    chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-    print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
+    # Check if ChromaDB is configured via client-server mode (production)
+    chroma_host = os.getenv('CHROMA_HOST')
+    chroma_port = os.getenv('CHROMA_PORT', '8000')
+    
+    if chroma_host:
+        # Use client-server mode (for production with separate ChromaDB service)
+        chroma_client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port))
+        try:
+            chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
+            print(f"✓ ChromaDB connected to {chroma_host}:{chroma_port}: {chroma_collection.count()} embeddings")
+        except Exception as e:
+            print(f"⚠️  ChromaDB collection not found: {str(e)}")
+            print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
+            chroma_collection = None
+    else:
+        # Use persistent client mode (local or with writable path)
+        # Try multiple paths: custom path, /tmp (production writable), then local
+        chroma_path = os.getenv('CHROMADB_PATH')
+        is_production = os.getenv('FLASK_ENV') == 'production' or os.getenv('NODE_ENV') == 'production'
+        
+        if not chroma_path:
+            # In production, use /tmp which is writable (ephemeral but works)
+            # For local development, use ./chromadb_data
+            if is_production:
+                chroma_path = '/tmp/chromadb_data'
+                print(f"🔧 Using /tmp for ChromaDB (production mode)")
+                
+                # Try to copy embeddings from read-only location if available
+                readonly_paths = ['./chromadb_data', '/app/chromadb_data', '/chromadb_data']
+                for readonly_path in readonly_paths:
+                    if os.path.exists(readonly_path) and os.path.isdir(readonly_path):
+                        try:
+                            if os.path.exists(chroma_path):
+                                shutil.rmtree(chroma_path)
+                            shutil.copytree(readonly_path, chroma_path)
+                            print(f"✓ Copied ChromaDB data from {readonly_path} to {chroma_path}")
+                            break
+                        except Exception as copy_error:
+                            print(f"⚠️  Could not copy from {readonly_path}: {str(copy_error)}")
+                            continue
+            else:
+                chroma_path = './chromadb_data'
+        
+        chroma_client = chromadb.PersistentClient(path=chroma_path)
+        try:
+            chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
+            print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
+        except Exception as e:
+            print(f"⚠️  ChromaDB collection not found at {chroma_path}: {str(e)}")
+            print("   Collection 'clinical_trials_embeddings' needs to be created with embeddings")
+            print("   Run generate_embeddings.py to create embeddings")
+            chroma_collection = None
 except Exception as e:
-    print(f"⚠️  ChromaDB not available: {str(e)}")
-    print("   Run generate_embeddings.py to enable semantic search")
+    print(f"⚠️  ChromaDB initialization failed: {str(e)}")
+    print("   Semantic search will be disabled. To enable:")
+    print("   - Option 1: Set CHROMA_HOST and CHROMA_PORT for client-server mode (recommended for production)")
+    print("   - Option 2: Set CHROMADB_PATH to a writable directory")
+    print("   - Option 3: Ensure /tmp is writable (used automatically in production)")
     chroma_collection = None
 
 # =============================================================================
