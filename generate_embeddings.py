@@ -4,13 +4,15 @@ This script processes all trials in MongoDB and creates vector embeddings for se
 Uses OpenAI embeddings (text-embedding-ada-002) for high-quality embeddings
 """
 
-from pymongo import MongoClient
+import os
 from openai import OpenAI
 import chromadb
 from tqdm import tqdm
 import json
 from dotenv import load_dotenv
 import time
+
+from db_utils import get_mongo_client
 
 # Load environment variables
 load_dotenv()
@@ -19,9 +21,8 @@ load_dotenv()
 # CONFIGURATION
 # =============================================================================
 
-MONGODB_URI = 'mongodb://localhost:27017/'
-DB_NAME = 'clinical_trials'
-COLLECTION_NAME = 'studies'
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
 
 # ChromaDB settings
 CHROMADB_PATH = './chromadb_data'
@@ -77,7 +78,7 @@ def main():
 
     # Step 1: Connect to MongoDB
     print("\n[1/5] Connecting to MongoDB...")
-    mongo_client = MongoClient(MONGODB_URI)
+    mongo_client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
     db = mongo_client[DB_NAME]
     collection = db[COLLECTION_NAME]
 

@@ -3,11 +3,16 @@ Quick Demo Script for Agentic Features
 Run this to test all new agentic AI capabilities
 """
 
+import os
 import requests
 import json
-from pymongo import MongoClient
+
+from db_utils import get_mongo_client
 
 BASE_URL = "http://localhost:5033"
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
+
 
 def print_section(title):
     print("\n" + "="*70)
@@ -53,9 +58,13 @@ def demo_multi_agent_analysis():
     print_section("🤖 DEMO 2: MULTI-AGENT PROTOCOL ANALYSIS")
 
     # Get a sample trial from database
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client['clinical_trials']
-    collection = db['studies']
+    try:
+        client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {str(e)}")
+        return
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
 
     # Find a trial with good data
     trial = collection.find_one({'status': 'RECRUITING'})
@@ -106,9 +115,13 @@ def demo_trial_comparison():
     print_section("🔬 DEMO 3: MULTI-AGENT TRIAL COMPARISON")
 
     # Get 3 trials from the same condition
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client['clinical_trials']
-    collection = db['studies']
+    try:
+        client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {str(e)}")
+        return
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
 
     # Try to find trials with similar conditions
     trials = list(collection.find({}).limit(3))

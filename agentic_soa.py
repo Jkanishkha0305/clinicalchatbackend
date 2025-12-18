@@ -7,15 +7,22 @@ from openai import OpenAI
 import os
 import re
 import markdown
-from pymongo import MongoClient
 import json
+
+from db_utils import get_mongo_client
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # MongoDB connection
-mongo_client = MongoClient('mongodb://localhost:27017/')
-db = mongo_client['clinical_trials']
-collection = db['studies']
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
+
+try:
+    mongo_client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    db = mongo_client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+except Exception as e:
+    raise RuntimeError(f"MongoDB Atlas connection failed: {str(e)}")
 
 # =============================================================================
 # AGENT DEFINITIONS

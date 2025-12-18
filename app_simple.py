@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 from flask_cors import CORS
-from pymongo import MongoClient
 from datetime import datetime
 import json
 import markdown
@@ -16,6 +15,8 @@ import secrets
 import itertools
 import re
 import shutil
+
+from db_utils import get_mongo_client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -49,27 +50,13 @@ app = Flask(__name__)
 CLIENT_HOST = os.getenv('CLIENT_HOST', 'http://localhost:3000')
 CORS(app, origins=[CLIENT_HOST, 'http://localhost:3000', 'https://clinicalchat.vercel.app'])
 
-# MongoDB connection - check multiple environment variable names for compatibility
-MONGODB_URI = os.getenv('MONGO_URL') or os.getenv('MONGODB_PROD_URL') or os.getenv('MONGODB_URI')
-if not MONGODB_URI:
-    print("⚠️  WARNING: MongoDB URI not found in environment variables")
-    print(f"Available env vars containing 'MONGO': {[k for k in os.environ.keys() if 'MONGO' in k.upper()]}")
-    MONGODB_URI = 'mongodb://localhost:27017/'
-    print(f"Falling back to localhost: {MONGODB_URI}")
-else:
-    print(f"🔌 Using MongoDB URI from environment")
-
-print(f"🔌 Connecting to MongoDB: {MONGODB_URI[:50]}...")
+print("🔌 Connecting to MongoDB Atlas...")
 
 try:
-    client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
-    # Validate connection on startup
-    client.server_info()
+    client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
     print("✓ MongoDB connected successfully!")
 except Exception as e:
-    print(f"✗ MongoDB connection failed: {str(e)}")
-    print("⚠️  WARNING: Running without database connection. Some features may not work.")
-    # Continue anyway (graceful degradation)
+    raise RuntimeError(f"✗ MongoDB connection failed: {str(e)}")
 
 # Use environment variables for database and collection names
 MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'clinical_trials')

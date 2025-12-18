@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
-from pymongo import MongoClient
 from datetime import datetime
 import json
 import markdown
 import tiktoken
 import os
 from openai import OpenAI
+
+from db_utils import get_mongo_client
 
 # =============================================================================
 # TOKEN COUNTING UTILITIES
@@ -69,10 +70,16 @@ def estimate_image_tokens(image_content):
 app = Flask(__name__)
 CORS(app)
 
-# MongoDB connection
-client = MongoClient('mongodb://localhost:27017/')
-db = client['clinical_trials']
-collection = db['studies']
+# MongoDB connection (Atlas only; refuses localhost)
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
+
+try:
+    client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+except Exception as e:
+    raise RuntimeError(f"MongoDB Atlas connection failed: {str(e)}")
 
 # OpenAI setup
 with open('data1/key/openai_key.txt') as f:
@@ -506,4 +513,3 @@ if __name__ == '__main__':
     print("Open your browser and go to: http://localhost:5033")
     print("=" * 60)
     app.run(debug=True, port=5033)
-

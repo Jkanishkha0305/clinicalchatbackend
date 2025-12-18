@@ -5,7 +5,12 @@ Import clinical trials data from SQLite to MongoDB
 
 import sqlite3
 import json
-from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
+
+from db_utils import get_mongo_client
+
+load_dotenv()
 
 print("🔄 Starting data import from SQLite to MongoDB...")
 print("=" * 60)
@@ -21,10 +26,12 @@ total_count = cursor.fetchone()[0]
 print(f"✓ Found {total_count:,} trials in SQLite database")
 
 # Connect to MongoDB
-print("\n📂 Connecting to MongoDB...")
-mongo_client = MongoClient('mongodb://localhost:27017/')
-db = mongo_client['clinical_trials']
-collection = db['studies']
+print("\n📂 Connecting to MongoDB Atlas...")
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
+mongo_client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+db = mongo_client[DB_NAME]
+collection = db[COLLECTION_NAME]
 
 # Clear existing data (if any)
 existing_count = collection.count_documents({})
@@ -101,4 +108,3 @@ mongo_client.close()
 print(f"\n{'='*60}")
 print("🎉 MongoDB is ready! You can now run: python app.py")
 print(f"{'='*60}")
-

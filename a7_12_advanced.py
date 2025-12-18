@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
-from pymongo import MongoClient
 from datetime import datetime
+import os
 import json, markdown
 import tiktoken
 import json
+
+from db_utils import get_mongo_client
 
 def count_tokens(messages, model="gpt-4o-mini"):
     """
@@ -59,11 +61,15 @@ def estimate_image_tokens(image_content):
 app = Flask(__name__)
 CORS(app)
 
-client = MongoClient('mongodb://localhost:27017/')
-db = client['clinical_trials']
-collection = db['studies']
+DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
 
-import os
+try:
+    client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+except Exception as e:
+    raise RuntimeError(f"MongoDB Atlas connection failed: {str(e)}")
 
 with open('data1/key/openai_key.txt') as f:
     openai_key = f.readline()
