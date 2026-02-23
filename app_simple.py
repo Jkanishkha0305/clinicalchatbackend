@@ -65,6 +65,10 @@ MONGO_COLLECTION_NAME = os.getenv('MONGO_COLLECTION_NAME', 'studies')
 db = client[MONGO_DB_NAME]
 collection = db[MONGO_COLLECTION_NAME]
 users_collection = db['users']  # For authentication
+chat_sessions_collection = db['chat_sessions']  # For chat sessions
+user_preferences_collection = db['user_preferences']  # For user preferences
+user_settings_collection = db['user_settings']  # For user settings
+study_chats_collection = db['study_chats']  # For study-specific chats
 
 # OpenAI setup - prioritize .env file
 openai_key = os.environ.get("OPENAI_API_KEY")
@@ -416,6 +420,9 @@ def search_studies():
     """Search for clinical trials based on filters"""
     filters = request.json
     
+    # Extract session ID if provided
+    session_id = filters.get('sessionId')
+    
     # Handle intervention - convert string to array if needed
     if filters.get('intervention'):
         if isinstance(filters['intervention'], str):
@@ -467,14 +474,41 @@ def search_studies():
         }
         simplified_results.append(simplified)
 
-    return jsonify({
+    # Handle session management
+    session_info = None
+    if session_id:
+        # Update existing session
+        chat_sessions_collection.update_one(
+            {'_id': session_id},
+            {
+                '$set': {
+                    'last_filters': filters,
+                    'updated_at': datetime.now().isoformat()
+                }
+            }
+        )
+        session = chat_sessions_collection.find_one({'_id': session_id})
+        if session:
+            session_info = {
+                'id': session['_id'],
+                'title': session.get('title', 'Search Session'),
+                'description': session.get('description', '')
+            }
+    
+    response_data = {
+        'success': True,
         'total': total,
         'page': page,
         'per_page': per_page,
         'total_pages': (total + per_page - 1) // per_page,
         'results': simplified_results,
         'searchType': 'keyword'
-    })
+    }
+    
+    if session_info:
+        response_data['sessionInfo'] = session_info
+    
+    return jsonify(response_data)
 
 
 def semantic_search_studies(filters):
@@ -788,9 +822,11 @@ def generate_protocol_report():
     data = request.json
     condition = data.get('condition', '')
     intervention = data.get('intervention', '')
+    session_id = data.get('sessionId')
+    format_type = data.get('format', 'styled')
 
     if not condition:
-        return jsonify({'error': 'Condition is required'}), 400
+        return jsonify({'success': False, 'error': 'Condition is required'}), 400
 
     # Build query to find similar trials
     query = {}
@@ -802,7 +838,7 @@ def generate_protocol_report():
     # Find similar trials
     total_count = collection.count_documents(query)
     if total_count == 0:
-        return jsonify({'error': f'No trials found for {condition}'}), 404
+        return jsonify({'success': False, 'error': f'No trials found for {condition}'}), 404
 
     # Limit to 100 trials for analysis
     limit = min(total_count, 100)
@@ -910,8 +946,58 @@ IMPORTANT:
         """
 
         full_report = header + report_html
+        
+        # Handle session management - create or update session
+        session_info = None
+        if session_id:
+            # Update existing session with report
+            session = chat_sessions_collection.find_one({'_id': session_id})
+            if session:
+                if 'reports' not in session:
+                    session['reports'] = []
+                session['reports'].append({
+                    'type': 'protocol',
+                    'content': full_report,
+                    'created_at': datetime.now().isoformat(),
+                    'format': format_type
+                })
+                chat_sessions_collection.update_one(
+                    {'_id': session_id},
+                    {'$set': {'reports': session['reports'], 'updated_at': datetime.now().isoformat()}}
+                )
+                session_info = {
+                    'id': session['_id'],
+                    'title': session.get('title', 'Protocol Report Session'),
+                    'description': session.get('description', '')
+                }
+        else:
+            # Create new session for this report
+            new_session_id = secrets.token_urlsafe(16)
+            session = {
+                '_id': new_session_id,
+                'title': f'Protocol Report: {condition}',
+                'description': f'Protocol research report for {condition}' + (f' with {intervention}' if intervention else ''),
+                'last_filters': {'condition': condition, 'intervention': intervention},
+                'messages': [],
+                'reports': [{
+                    'type': 'protocol',
+                    'content': full_report,
+                    'created_at': datetime.now().isoformat(),
+                    'format': format_type
+                }],
+                'custom_questions': None,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            chat_sessions_collection.insert_one(session)
+            session_info = {
+                'id': new_session_id,
+                'title': session['title'],
+                'description': session['description']
+            }
 
-        return jsonify({
+        response_data = {
+            'success': True,
             'report': full_report,
             'metadata': {
                 'trials_analyzed': len(trials_summary),
@@ -919,11 +1005,361 @@ IMPORTANT:
                 'condition': condition,
                 'intervention': intervention
             }
-        })
+        }
+        
+        if session_info:
+            response_data['sessionInfo'] = session_info
+        
+        return jsonify(response_data)
 
     except Exception as e:
         print(f"Error generating protocol report: {str(e)}")
-        return jsonify({'error': f'AI error: {str(e)}'}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'AI error: {str(e)}'}), 500
+
+
+@app.route('/api/generate-chat-report', methods=['POST'])
+def generate_chat_report():
+    """Generate a report based on a chat session conversation"""
+    data = request.json
+    session_id = data.get('sessionId', '')
+    format_type = data.get('format', 'styled')
+    
+    if not session_id:
+        return jsonify({'success': False, 'error': 'Session ID is required'}), 400
+    
+    try:
+        # Get chat session from database
+        session = chat_sessions_collection.find_one({'_id': session_id})
+        if not session:
+            return jsonify({'success': False, 'error': 'Chat session not found'}), 404
+        
+        # Extract messages and filters
+        messages = session.get('messages', [])
+        last_filters = session.get('last_filters', {})
+        condition = last_filters.get('condition', 'Unknown')
+        intervention = last_filters.get('intervention', '')
+        
+        # Get studies from the session context
+        query = build_query_from_filters(last_filters) if last_filters else {}
+        total_count = collection.count_documents(query)
+        limit = min(total_count, 50)
+        studies = list(collection.find(query).limit(limit))
+        
+        # Prepare conversation summary
+        conversation_summary = []
+        for msg in messages[-10:]:  # Last 10 messages
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            if len(content) > 500:
+                content = content[:500] + '...'
+            conversation_summary.append(f"{role.upper()}: {content}")
+        
+        conversation_text = '\n\n'.join(conversation_summary)
+        
+        # AI prompt for chat report generation
+        system_message = f"""You are a clinical research analyst. Generate a comprehensive research report based on this chat conversation.
+
+CONVERSATION SUMMARY:
+{conversation_text}
+
+PRIMARY FOCUS: {condition}
+{f"INTERVENTION: {intervention}" if intervention else ""}
+STUDIES AVAILABLE: {len(studies)} studies analyzed (out of {total_count} matching)
+
+Generate a detailed research report with these sections:
+
+1. CONVERSATION OVERVIEW
+   - Summarize the key questions and topics discussed
+   - Highlight main findings from the conversation
+
+2. KEY INSIGHTS
+   - Extract the most important insights from the conversation
+   - Provide evidence-based conclusions
+
+3. STUDY LANDSCAPE
+   - Summarize the relevant clinical trials landscape
+   - Provide statistics on study designs, phases, and interventions
+
+4. RECOMMENDATIONS
+   - Based on the conversation, provide actionable recommendations
+   - Suggest areas for further investigation
+
+5. REFERENCES
+   - List relevant NCT IDs mentioned or related to the discussion
+   - Format NCT IDs as: NCT00000000
+
+Format the report professionally with clear sections and bullet points."""
+        
+        message_list = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": f"Generate a comprehensive research report based on this chat conversation about {condition}."}
+        ]
+        
+        token_count = count_tokens(message_list, model="gpt-4o")
+        print(f"📊 Chat Report - Token count: {token_count:,} tokens")
+        
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=message_list,
+            temperature=0.3,
+            max_tokens=2500
+        )
+        
+        report = completion.choices[0].message.content
+        report_html = markdown.markdown(report, extensions=['extra', 'nl2br', 'tables'])
+        
+        # Convert NCT IDs to clickable links
+        nct_pattern = r'(NCT\d{8})'
+        report_html = re.sub(
+            nct_pattern,
+            r'<a href="https://clinicaltrials.gov/study/\1" target="_blank" style="color: #4f46e5; text-decoration: underline;">\1</a>',
+            report_html
+        )
+        
+        # Add metadata header based on format
+        if format_type == 'styled':
+            header = f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h2 style="margin: 0 0 10px 0;">💬 Chat Conversation Research Report</h2>
+                <p style="margin: 5px 0;"><strong>Primary Focus:</strong> {condition}</p>
+                {f'<p style="margin: 5px 0;"><strong>Intervention:</strong> {intervention}</p>' if intervention else ''}
+                <p style="margin: 5px 0;"><strong>Messages Analyzed:</strong> {len(messages)}</p>
+                <p style="margin: 5px 0;"><strong>Studies Referenced:</strong> {len(studies)} studies (out of {total_count} matching)</p>
+                <p style="margin: 5px 0; font-size: 12px; opacity: 0.9;">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        elif format_type == 'professional':
+            header = f"""
+            <div style="border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-bottom: 20px;">
+                <h2 style="margin: 0 0 10px 0; color: #333;">Chat Conversation Research Report</h2>
+                <p style="margin: 5px 0; color: #666;"><strong>Primary Focus:</strong> {condition}</p>
+                {f'<p style="margin: 5px 0; color: #666;"><strong>Intervention:</strong> {intervention}</p>' if intervention else ''}
+                <p style="margin: 5px 0; color: #666;"><strong>Messages:</strong> {len(messages)} | <strong>Studies:</strong> {len(studies)}/{total_count}</p>
+                <p style="margin: 5px 0; font-size: 12px; color: #999;">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        else:  # standard
+            header = f"""
+            <div style="margin-bottom: 20px;">
+                <h2>Chat Conversation Research Report</h2>
+                <p><strong>Primary Focus:</strong> {condition}</p>
+                {f'<p><strong>Intervention:</strong> {intervention}</p>' if intervention else ''}
+                <p><strong>Messages:</strong> {len(messages)} | <strong>Studies:</strong> {len(studies)}/{total_count}</p>
+                <p>Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        
+        full_report = header + report_html
+        
+        # Save report to session
+        if 'reports' not in session:
+            session['reports'] = []
+        session['reports'].append({
+            'type': 'chat',
+            'content': full_report,
+            'created_at': datetime.now().isoformat(),
+            'format': format_type
+        })
+        chat_sessions_collection.update_one(
+            {'_id': session_id},
+            {'$set': {'reports': session['reports']}}
+        )
+        
+        return jsonify({
+            'success': True,
+            'report': full_report,
+            'metadata': {
+                'messages_count': len(messages),
+                'studies_analyzed': len(studies),
+                'total_matching': total_count,
+                'condition': condition,
+                'intervention': intervention if intervention else None
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error generating chat report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'AI error: {str(e)}'}), 500
+
+
+@app.route('/api/generate-study-chat-report', methods=['POST'])
+def generate_study_chat_report():
+    """Generate a report based on a specific study chat conversation"""
+    data = request.json
+    study_id = data.get('studyId', '')
+    chat_session_id = data.get('chatSessionId', '')
+    format_type = data.get('format', 'styled')
+    
+    if not study_id:
+        return jsonify({'success': False, 'error': 'Study ID is required'}), 400
+    
+    try:
+        # Get study from database
+        study = collection.find_one({'nct_id': study_id})
+        if not study:
+            return jsonify({'success': False, 'error': 'Study not found'}), 404
+        
+        study_title = study.get('title', 'Unknown Study')
+        
+        # Get study chat messages
+        query = {'study_id': study_id}
+        if chat_session_id:
+            query['chat_session_id'] = chat_session_id
+        
+        study_chat = study_chats_collection.find_one(query)
+        messages = study_chat.get('messages', []) if study_chat else []
+        
+        # Prepare conversation summary
+        conversation_summary = []
+        for msg in messages:
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            if len(content) > 500:
+                content = content[:500] + '...'
+            conversation_summary.append(f"{role.upper()}: {content}")
+        
+        conversation_text = '\n\n'.join(conversation_summary)
+        
+        # Prepare study summary
+        study_summary = {
+            'nct_id': study.get('nct_id'),
+            'title': study.get('title'),
+            'status': study.get('status'),
+            'conditions': study.get('conditions', []),
+            'interventions': study.get('interventions', []),
+            'summary': study.get('summary', '')[:1000]
+        }
+        study_json = json.dumps(study_summary, indent=2)
+        
+        # AI prompt for study chat report generation
+        system_message = f"""You are a clinical research analyst. Generate a comprehensive report based on the conversation about this specific clinical trial.
+
+STUDY INFORMATION:
+{study_json}
+
+CONVERSATION SUMMARY:
+{conversation_text}
+
+Generate a detailed report with these sections:
+
+1. STUDY OVERVIEW
+   - Summarize the key aspects of this clinical trial
+   - Highlight the study design, intervention, and objectives
+
+2. CONVERSATION INSIGHTS
+   - Summarize the key questions and topics discussed about this study
+   - Extract important insights from the conversation
+
+3. DETAILED ANALYSIS
+   - Provide in-depth analysis based on the conversation
+   - Address specific questions or concerns raised
+
+4. KEY FINDINGS
+   - List the most important findings discussed
+   - Provide evidence-based conclusions
+
+5. CLINICAL IMPLICATIONS
+   - Discuss the clinical relevance of this study
+   - Suggest practical applications or considerations
+
+Format the report professionally with clear sections and bullet points.
+Always reference the study by its NCT ID: {study_id}"""
+        
+        message_list = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": f"Generate a comprehensive report about study {study_id} based on our conversation."}
+        ]
+        
+        token_count = count_tokens(message_list, model="gpt-4o")
+        print(f"📊 Study Chat Report - Token count: {token_count:,} tokens")
+        
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=message_list,
+            temperature=0.3,
+            max_tokens=2500
+        )
+        
+        report = completion.choices[0].message.content
+        report_html = markdown.markdown(report, extensions=['extra', 'nl2br', 'tables'])
+        
+        # Convert NCT IDs to clickable links
+        nct_pattern = r'(NCT\d{8})'
+        report_html = re.sub(
+            nct_pattern,
+            r'<a href="https://clinicaltrials.gov/study/\1" target="_blank" style="color: #4f46e5; text-decoration: underline;">\1</a>',
+            report_html
+        )
+        
+        # Add metadata header based on format
+        if format_type == 'styled':
+            header = f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h2 style="margin: 0 0 10px 0;">🔬 Study Chat Research Report</h2>
+                <p style="margin: 5px 0;"><strong>Study:</strong> {study_id}</p>
+                <p style="margin: 5px 0;"><strong>Title:</strong> {study_title}</p>
+                <p style="margin: 5px 0;"><strong>Messages Analyzed:</strong> {len(messages)}</p>
+                <p style="margin: 5px 0; font-size: 12px; opacity: 0.9;">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        elif format_type == 'professional':
+            header = f"""
+            <div style="border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-bottom: 20px;">
+                <h2 style="margin: 0 0 10px 0; color: #333;">Study Chat Research Report</h2>
+                <p style="margin: 5px 0; color: #666;"><strong>Study:</strong> {study_id}</p>
+                <p style="margin: 5px 0; color: #666;"><strong>Title:</strong> {study_title}</p>
+                <p style="margin: 5px 0; color: #666;"><strong>Messages:</strong> {len(messages)}</p>
+                <p style="margin: 5px 0; font-size: 12px; color: #999;">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        else:  # standard
+            header = f"""
+            <div style="margin-bottom: 20px;">
+                <h2>Study Chat Research Report</h2>
+                <p><strong>Study:</strong> {study_id}</p>
+                <p><strong>Title:</strong> {study_title}</p>
+                <p><strong>Messages:</strong> {len(messages)}</p>
+                <p>Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+        
+        full_report = header + report_html
+        
+        # Save report to study chat
+        if study_chat:
+            if 'reports' not in study_chat:
+                study_chat['reports'] = []
+            study_chat['reports'].append({
+                'type': 'study_chat',
+                'content': full_report,
+                'created_at': datetime.now().isoformat(),
+                'format': format_type
+            })
+            study_chats_collection.update_one(
+                query,
+                {'$set': {'reports': study_chat['reports']}}
+            )
+        
+        return jsonify({
+            'success': True,
+            'report': full_report,
+            'metadata': {
+                'messages_count': len(messages),
+                'study_id': study_id,
+                'study_title': study_title,
+                'report_type': 'study_chat'
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error generating study chat report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'AI error: {str(e)}'}), 500
 
 
 @app.route('/api/compare-trials', methods=['POST'])
@@ -1235,6 +1671,448 @@ def add_documents():
     except Exception as e:
         print(f"Error adding documents: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# CHAT SESSIONS API
+# =============================================================================
+
+@app.route('/api/chat-sessions', methods=['GET'])
+def get_chat_sessions():
+    """Get all chat sessions for the current user"""
+    try:
+        # TODO: Add user authentication and filter by user_id
+        sessions = list(chat_sessions_collection.find().sort('created_at', -1))
+        
+        # Convert ObjectId to string
+        for session in sessions:
+            if '_id' in session:
+                session['id'] = str(session['_id'])
+                del session['_id']
+        
+        return jsonify({'success': True, 'sessions': sessions})
+    except Exception as e:
+        print(f"Error getting chat sessions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat-sessions', methods=['POST'])
+def create_chat_session():
+    """Create a new chat session"""
+    try:
+        data = request.json or {}
+        
+        session = {
+            '_id': secrets.token_urlsafe(16),
+            'title': data.get('title', 'New Chat Session'),
+            'description': data.get('description', ''),
+            'last_filters': data.get('last_filters', {}),
+            'messages': [],
+            'reports': [],
+            'custom_questions': None,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        chat_sessions_collection.insert_one(session)
+        
+        # Convert for response
+        session['id'] = session['_id']
+        del session['_id']
+        
+        return jsonify({'success': True, 'session': session})
+    except Exception as e:
+        print(f"Error creating chat session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat-sessions/<session_id>', methods=['GET'])
+def get_chat_session(session_id):
+    """Get a specific chat session"""
+    try:
+        session = chat_sessions_collection.find_one({'_id': session_id})
+        
+        if not session:
+            return jsonify({'success': False, 'error': 'Session not found'}), 404
+        
+        # Convert for response
+        session['id'] = session['_id']
+        del session['_id']
+        
+        return jsonify({'success': True, 'session': session})
+    except Exception as e:
+        print(f"Error getting chat session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat-sessions/<session_id>', methods=['PATCH'])
+def update_chat_session(session_id):
+    """Update a chat session"""
+    try:
+        data = request.json or {}
+        
+        update_data = {
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if 'title' in data:
+            update_data['title'] = data['title']
+        if 'description' in data:
+            update_data['description'] = data['description']
+        if 'last_filters' in data:
+            update_data['last_filters'] = data['last_filters']
+        if 'custom_questions' in data:
+            update_data['custom_questions'] = data['custom_questions']
+        
+        result = chat_sessions_collection.update_one(
+            {'_id': session_id},
+            {'$set': update_data}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({'success': False, 'error': 'Session not found'}), 404
+        
+        # Get updated session
+        session = chat_sessions_collection.find_one({'_id': session_id})
+        session['id'] = session['_id']
+        del session['_id']
+        
+        return jsonify({'success': True, 'session': session})
+    except Exception as e:
+        print(f"Error updating chat session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat-sessions/<session_id>', methods=['DELETE'])
+def delete_chat_session(session_id):
+    """Delete a chat session"""
+    try:
+        result = chat_sessions_collection.delete_one({'_id': session_id})
+        
+        if result.deleted_count == 0:
+            return jsonify({'success': False, 'error': 'Session not found'}), 404
+        
+        return jsonify({'success': True, 'message': 'Session deleted successfully'})
+    except Exception as e:
+        print(f"Error deleting chat session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================================================
+# USER PREFERENCES AND SETTINGS API
+# =============================================================================
+
+@app.route('/api/user-preferences', methods=['GET'])
+def get_user_preferences():
+    """Get user preferences"""
+    try:
+        # TODO: Add user authentication and filter by user_id
+        # For now, return default preferences
+        prefs = user_preferences_collection.find_one({}) or {
+            'default_chat_questions': [
+                'What are the eligibility criteria?',
+                'What is the study design?',
+                'What are the primary outcomes?'
+            ],
+            'ai_provider': 'openai',
+            'ai_model': 'gpt-4o-mini'
+        }
+        
+        return jsonify({'success': True, 'preferences': prefs})
+    except Exception as e:
+        print(f"Error getting user preferences: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/user-preferences', methods=['PATCH'])
+def update_user_preferences():
+    """Update user preferences"""
+    try:
+        data = request.json or {}
+        
+        # TODO: Add user authentication
+        result = user_preferences_collection.update_one(
+            {},
+            {'$set': data},
+            upsert=True
+        )
+        
+        # Get updated preferences
+        prefs = user_preferences_collection.find_one({})
+        
+        return jsonify({'success': True, 'preferences': prefs})
+    except Exception as e:
+        print(f"Error updating user preferences: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/user-settings', methods=['GET'])
+def get_user_settings():
+    """Get user settings"""
+    try:
+        # TODO: Add user authentication and filter by user_id
+        settings = user_settings_collection.find_one({}) or {
+            'theme': 'light',
+            'visible_models': ['gpt-4o-mini', 'gpt-4o', 'gemini-1.5-flash'],
+            'report_format': 'styled'
+        }
+        
+        return jsonify({'success': True, 'settings': settings})
+    except Exception as e:
+        print(f"Error getting user settings: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/user-settings', methods=['PATCH'])
+def update_user_settings():
+    """Update user settings"""
+    try:
+        data = request.json or {}
+        
+        # TODO: Add user authentication
+        result = user_settings_collection.update_one(
+            {},
+            {'$set': data},
+            upsert=True
+        )
+        
+        # Get updated settings
+        settings = user_settings_collection.find_one({})
+        
+        return jsonify({'success': True, 'settings': settings})
+    except Exception as e:
+        print(f"Error updating user settings: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================================================
+# CHAT QUESTIONS API
+# =============================================================================
+
+@app.route('/api/chat-questions', methods=['GET'])
+def get_chat_questions():
+    """Get chat questions for a session or default"""
+    try:
+        session_id = request.args.get('sessionId')
+        
+        if session_id:
+            session = chat_sessions_collection.find_one({'_id': session_id})
+            if session and session.get('custom_questions'):
+                return jsonify({
+                    'success': True,
+                    'questions': session['custom_questions'],
+                    'source': 'session'
+                })
+        
+        # Return user default questions
+        prefs = user_preferences_collection.find_one({})
+        default_questions = prefs.get('default_chat_questions', [
+            'What are the eligibility criteria?',
+            'What is the study design?',
+            'What are the primary outcomes?'
+        ]) if prefs else [
+            'What are the eligibility criteria?',
+            'What is the study design?',
+            'What are the primary outcomes?'
+        ]
+        
+        return jsonify({
+            'success': True,
+            'questions': default_questions,
+            'source': 'default'
+        })
+    except Exception as e:
+        print(f"Error getting chat questions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat-questions', methods=['PATCH'])
+def update_chat_questions():
+    """Update chat questions for a session or as default"""
+    try:
+        data = request.json or {}
+        session_id = data.get('sessionId')
+        questions = data.get('questions', [])
+        save_as_default = data.get('saveAsDefault', False)
+        
+        if save_as_default:
+            # Update user preferences
+            user_preferences_collection.update_one(
+                {},
+                {'$set': {'default_chat_questions': questions}},
+                upsert=True
+            )
+        
+        if session_id:
+            # Update session
+            chat_sessions_collection.update_one(
+                {'_id': session_id},
+                {'$set': {'custom_questions': questions}}
+            )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Questions updated successfully'
+        })
+    except Exception as e:
+        print(f"Error updating chat questions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================================================
+# STUDY CHATS API
+# =============================================================================
+
+@app.route('/api/study-chats', methods=['GET'])
+def get_study_chats():
+    """Get all study chats, optionally filtered by session"""
+    try:
+        chat_session_id = request.args.get('chatSessionId')
+        
+        query = {}
+        if chat_session_id:
+            query['chat_session_id'] = chat_session_id
+        
+        study_chats = list(study_chats_collection.find(query))
+        
+        # Convert ObjectId to string
+        for chat in study_chats:
+            if '_id' in chat:
+                chat['id'] = str(chat['_id'])
+                del chat['_id']
+        
+        return jsonify({'success': True, 'studyChats': study_chats})
+    except Exception as e:
+        print(f"Error getting study chats: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/study-chats/<study_id>', methods=['GET'])
+def get_study_chat(study_id):
+    """Get a specific study chat"""
+    try:
+        chat_session_id = request.args.get('chatSessionId')
+        
+        query = {'study_id': study_id}
+        if chat_session_id:
+            query['chat_session_id'] = chat_session_id
+        
+        study_chat = study_chats_collection.find_one(query)
+        
+        if not study_chat:
+            # Create a new study chat
+            study_chat = {
+                'study_id': study_id,
+                'chat_session_id': chat_session_id,
+                'messages': [],
+                'reports': [],
+                'custom_questions': None,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            study_chats_collection.insert_one(study_chat)
+        
+        # Convert for response
+        if '_id' in study_chat:
+            del study_chat['_id']
+        
+        return jsonify({'success': True, 'studyChat': study_chat})
+    except Exception as e:
+        print(f"Error getting study chat: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/study-chats/<study_id>/<session_id>', methods=['DELETE'])
+def delete_study_chat(study_id, session_id):
+    """Delete a specific study chat"""
+    try:
+        result = study_chats_collection.delete_one({
+            'study_id': study_id,
+            'chat_session_id': session_id
+        })
+        
+        if result.deleted_count == 0:
+            return jsonify({'success': False, 'error': 'Study chat not found'}), 404
+        
+        return jsonify({'success': True, 'message': 'Study chat deleted successfully'})
+    except Exception as e:
+        print(f"Error deleting study chat: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/study-chat-questions', methods=['GET'])
+def get_study_chat_questions():
+    """Get study chat questions"""
+    try:
+        study_id = request.args.get('studyId')
+        chat_session_id = request.args.get('chatSessionId')
+        
+        # First check for study-specific custom questions
+        if study_id and chat_session_id:
+            query = {'study_id': study_id, 'chat_session_id': chat_session_id}
+            study_chat = study_chats_collection.find_one(query)
+            if study_chat and study_chat.get('custom_questions'):
+                return jsonify({
+                    'success': True,
+                    'questions': study_chat['custom_questions'],
+                    'source': 'study_chat'
+                })
+        
+        # Return user default questions
+        prefs = user_preferences_collection.find_one({})
+        default_questions = prefs.get('default_chat_questions', [
+            'What are the eligibility criteria?',
+            'What is the study design?',
+            'What are the primary outcomes?'
+        ]) if prefs else [
+            'What are the eligibility criteria?',
+            'What is the study design?',
+            'What are the primary outcomes?'
+        ]
+        
+        return jsonify({
+            'success': True,
+            'questions': default_questions,
+            'source': 'default'
+        })
+    except Exception as e:
+        print(f"Error getting study chat questions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/study-chat-questions', methods=['PATCH'])
+def update_study_chat_questions():
+    """Update study chat questions"""
+    try:
+        data = request.json or {}
+        study_id = data.get('studyId')
+        chat_session_id = data.get('chatSessionId')
+        questions = data.get('questions', [])
+        save_as_default = data.get('saveAsDefault', False)
+        
+        if save_as_default:
+            # Update user preferences
+            user_preferences_collection.update_one(
+                {},
+                {'$set': {'default_chat_questions': questions}},
+                upsert=True
+            )
+        
+        if study_id and chat_session_id:
+            # Update study chat
+            study_chats_collection.update_one(
+                {'study_id': study_id, 'chat_session_id': chat_session_id},
+                {'$set': {'custom_questions': questions}},
+                upsert=True
+            )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Study chat questions updated successfully'
+        })
+    except Exception as e:
+        print(f"Error updating study chat questions: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # =============================================================================
