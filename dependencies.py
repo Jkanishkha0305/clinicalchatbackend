@@ -156,26 +156,17 @@ try:
                 chroma_collection = None
         else:
             chroma_path = os.getenv('CHROMADB_PATH')
-            is_prod = os.getenv('FLASK_ENV') == 'production' or os.getenv('NODE_ENV') == 'production'
-            if not chroma_path:
-                chroma_path = '/tmp/chromadb_data' if is_prod else './chromadb_data'
-                if is_prod:
-                    for ro in ['./chromadb_data', '/app/chromadb_data']:
-                        if os.path.exists(ro):
-                            try:
-                                if os.path.exists(chroma_path):
-                                    shutil.rmtree(chroma_path)
-                                shutil.copytree(ro, chroma_path)
-                                break
-                            except Exception:
-                                pass
-            chroma_client = chromadb.PersistentClient(path=chroma_path)
-            try:
-                chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
-                print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
-            except Exception as e:
-                print(f"⚠️  ChromaDB collection not found at {chroma_path}: {e}")
-                chroma_collection = None
+            if chroma_path:
+                # Only initialise local PersistentClient when path is explicitly configured
+                chroma_client = chromadb.PersistentClient(path=chroma_path)
+                try:
+                    chroma_collection = chroma_client.get_collection(name='clinical_trials_embeddings')
+                    print(f"✓ ChromaDB loaded from {chroma_path}: {chroma_collection.count()} embeddings")
+                except Exception as e:
+                    print(f"⚠️  ChromaDB collection not found at {chroma_path}: {e}")
+                    chroma_collection = None
+            else:
+                print("⚠️  ChromaDB not configured (set CHROMA_API_KEY+CHROMA_TENANT, CHROMA_HOST, or CHROMADB_PATH)")
 except Exception as e:
     print(f"⚠️  ChromaDB initialisation failed: {e}")
     chroma_collection = None
@@ -196,7 +187,7 @@ try:
 
     if qdrant_url and qdrant_api_key:
         print("\n🔌 Connecting to Qdrant Cloud...")
-        qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=5)
         try:
             info = qdrant_client.get_collection(QDRANT_COLLECTION_NAME)
             print(f"✓ Qdrant Cloud connected: {info.vectors_count:,} vectors")
