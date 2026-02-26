@@ -1019,6 +1019,199 @@ IMPORTANT:
         return jsonify({'success': False, 'error': f'AI error: {str(e)}'}), 500
 
 
+@app.route('/api/generate-protocol-report-stream', methods=['POST'])
+def generate_protocol_report_stream():
+    """Generate protocol report with SSE streaming to avoid timeouts"""
+    data = request.json
+    condition = data.get('condition', '')
+    intervention = data.get('intervention', '')
+    session_id = data.get('sessionId')
+    format_type = data.get('format', 'styled')
+
+    def error_stream(msg):
+        yield f"data: {json.dumps({'type': 'error', 'error': msg})}\n\n"
+
+    if not condition:
+        return Response(stream_with_context(error_stream('Condition is required')),
+                        content_type='text/event-stream')
+
+    query = {}
+    if condition:
+        query['conditions'] = {'$regex': condition, '$options': 'i'}
+    if intervention:
+        query['interventions'] = {'$regex': intervention, '$options': 'i'}
+
+    total_count = collection.count_documents(query)
+    if total_count == 0:
+        return Response(stream_with_context(error_stream(f'No trials found for {condition}')),
+                        content_type='text/event-stream')
+
+    limit = min(total_count, 100)
+    similar_trials = list(collection.find(query).limit(limit))
+
+    trials_summary = []
+    for trial in similar_trials:
+        trials_summary.append({
+            'nct_id': trial.get('nct_id'),
+            'title': trial.get('title'),
+            'status': trial.get('status'),
+            'conditions': trial.get('conditions', []),
+            'interventions': trial.get('interventions', []),
+            'summary': trial.get('summary', '')[:500]
+        })
+
+    trials_json = json.dumps(trials_summary, indent=1)
+
+    system_message = f"""You are a clinical trial protocol design expert. Generate a comprehensive protocol research report with detailed statistics.
+
+DATASET: {len(trials_summary)} similar clinical trials
+Condition: {condition}
+{f"Intervention: {intervention}" if intervention else ""}
+
+TRIALS DATA:
+{trials_json}
+
+Generate a detailed protocol research report with these sections. Include QUANTITATIVE STATISTICS in every section:
+
+1. ELIGIBILITY CRITERIA RECOMMENDATIONS
+   - Analyze the most common inclusion criteria across trials with percentages (e.g., "Age ≥18: 85% of trials")
+   - Analyze the most common exclusion criteria with frequencies
+   - Provide specific recommendations with statistical support
+   - Include: prevalence (%), counts, and ranges where applicable
+
+2. STUDY DESIGN PATTERNS
+   - Identify common study designs with distribution (e.g., "Randomized: 60%, Single-arm: 25%")
+   - Typical duration ranges with median and mean values
+   - Common sample sizes: provide min, max, median, and quartiles
+   - Phase distribution with percentages
+   - Include specific counts and statistical breakdowns
+
+3. KEY INTERVENTIONS ANALYSIS
+   - Most common interventions with usage percentages
+   - Typical dosing/treatment approaches with frequency data
+   - Combination vs monotherapy statistics
+   - Include prevalence data for each intervention type
+
+4. SIMILAR TRIALS REFERENCE
+   - List top 5-8 most relevant trial NCT IDs with brief descriptions
+   - Include trial phase, status, and key characteristics
+   - Format NCT IDs exactly as: NCT00000000 (they will be converted to links)
+
+5. STUDY LIMITATIONS
+   - Discuss data completeness and quality issues
+   - Scope of analysis: date ranges, trial selection criteria
+   - Potential biases in the dataset
+   - Recommendations for interpreting these results
+   - Statistical limitations and confidence considerations
+
+IMPORTANT:
+- Include specific numbers, percentages, and statistical measures in EVERY section
+- Use quantitative evidence to support all recommendations
+- Provide counts alongside percentages (e.g., "45% (18/40 trials)")
+- Format the report professionally with clear sections and bullet points"""
+
+    def generate():
+        full_report_text = ""
+        try:
+            stream = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": f"Generate a protocol research report for designing a new {condition} trial{f' using {intervention}' if intervention else ''}."}
+                ],
+                temperature=0.3,
+                max_tokens=2500,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    full_report_text += delta.content
+                    yield f"data: {json.dumps({'type': 'content', 'chunk': delta.content})}\n\n"
+
+            # Post-process the complete report
+            report_html = markdown.markdown(full_report_text, extensions=['extra', 'nl2br', 'tables'])
+            nct_pattern = r'(NCT\d{8})'
+            report_html = re.sub(
+                nct_pattern,
+                r'<a href="https://clinicaltrials.gov/study/\1" target="_blank" style="color: #4f46e5; text-decoration: underline;">\1</a>',
+                report_html
+            )
+            header = f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h2 style="margin: 0 0 10px 0;">📋 Clinical Trial Protocol Research Report</h2>
+                <p style="margin: 5px 0;"><strong>Indication:</strong> {condition}</p>
+                {f'<p style="margin: 5px 0;"><strong>Intervention:</strong> {intervention}</p>' if intervention else ''}
+                <p style="margin: 5px 0;"><strong>Analysis Based On:</strong> {len(trials_summary)} similar trials (out of {total_count} total)</p>
+                <p style="margin: 5px 0; font-size: 12px; opacity: 0.9;">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+            """
+            full_html = header + report_html
+
+            # Session management
+            session_info = None
+            if session_id:
+                session = chat_sessions_collection.find_one({'_id': session_id})
+                if session:
+                    if 'reports' not in session:
+                        session['reports'] = []
+                    session['reports'].append({
+                        'type': 'protocol',
+                        'content': full_html,
+                        'created_at': datetime.now().isoformat(),
+                        'format': format_type
+                    })
+                    chat_sessions_collection.update_one(
+                        {'_id': session_id},
+                        {'$set': {'reports': session['reports'], 'updated_at': datetime.now().isoformat()}}
+                    )
+                    session_info = {
+                        'id': session['_id'],
+                        'title': session.get('title', 'Protocol Report Session'),
+                        'description': session.get('description', '')
+                    }
+            else:
+                new_session_id = secrets.token_urlsafe(16)
+                session = {
+                    '_id': new_session_id,
+                    'title': f'Protocol Report: {condition}',
+                    'description': f'Protocol research report for {condition}' + (f' with {intervention}' if intervention else ''),
+                    'last_filters': {'condition': condition, 'intervention': intervention},
+                    'messages': [],
+                    'reports': [{
+                        'type': 'protocol',
+                        'content': full_html,
+                        'created_at': datetime.now().isoformat(),
+                        'format': format_type
+                    }],
+                    'custom_questions': None,
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
+                }
+                chat_sessions_collection.insert_one(session)
+                session_info = {
+                    'id': new_session_id,
+                    'title': session['title'],
+                    'description': session['description']
+                }
+
+            yield f"data: {json.dumps({'type': 'done', 'report': full_html, 'metadata': {'trials_analyzed': len(trials_summary), 'total_matching': total_count, 'condition': condition, 'intervention': intervention}, 'sessionInfo': session_info})}\n\n"
+
+        except Exception as e:
+            print(f"Error in protocol report stream: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return Response(stream_with_context(generate()), headers=headers)
+
+
 @app.route('/api/generate-chat-report', methods=['POST'])
 def generate_chat_report():
     """Generate a report based on a chat session conversation"""
