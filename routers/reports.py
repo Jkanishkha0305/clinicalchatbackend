@@ -134,20 +134,32 @@ IMPORTANT:
 
         full_report = header + report_html
 
+        report_doc = {
+            "condition": condition,
+            "intervention": intervention if intervention else None,
+            "report": full_report,
+            "created_at": datetime.now().isoformat(),
+            "metadata": {
+                "trials_analyzed": len(trials_summary),
+                "total_matching": total_count,
+                "condition": condition,
+                "intervention": intervention if intervention else None,
+            },
+        }
+
         session_info = None
         if session_id:
             session = deps.chat_sessions_collection.find_one({"_id": session_id})
             if session:
                 reports = session.get("reports", [])
-                reports.append({
-                    "type": "protocol",
-                    "content": full_report,
-                    "created_at": datetime.now().isoformat(),
-                    "format": format_type,
-                })
+                reports.append(report_doc)
                 deps.chat_sessions_collection.update_one(
                     {"_id": session_id},
-                    {"$set": {"reports": reports, "updated_at": datetime.now().isoformat()}},
+                    {"$set": {
+                        "reports": reports,
+                        "last_report_filters": {"condition": condition, "intervention": intervention if intervention else None},
+                        "updated_at": datetime.now().isoformat(),
+                    }},
                 )
                 session_info = {
                     "id": session["_id"],
@@ -161,13 +173,9 @@ IMPORTANT:
                 "title": f"Protocol Report: {condition}",
                 "description": f"Protocol research report for {condition}" + (f" with {intervention}" if intervention else ""),
                 "last_filters": {"condition": condition, "intervention": intervention},
+                "last_report_filters": {"condition": condition, "intervention": intervention if intervention else None},
                 "messages": [],
-                "reports": [{
-                    "type": "protocol",
-                    "content": full_report,
-                    "created_at": datetime.now().isoformat(),
-                    "format": format_type,
-                }],
+                "reports": [report_doc],
                 "custom_questions": None,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
@@ -312,10 +320,18 @@ Format the report professionally with clear sections and bullet points."""
 
         reports = session.get("reports", [])
         reports.append({
-            "type": "chat",
-            "content": full_report,
+            "condition": condition,
+            "intervention": intervention if intervention else None,
+            "report": full_report,
             "created_at": datetime.now().isoformat(),
-            "format": format_type,
+            "metadata": {
+                "messages_count": len(messages),
+                "studies_analyzed": len(studies),
+                "total_matching": total_count,
+                "condition": condition,
+                "intervention": intervention if intervention else None,
+                "report_type": "chat_report",
+            },
         })
         deps.chat_sessions_collection.update_one({"_id": session_id}, {"$set": {"reports": reports}})
 
@@ -465,10 +481,16 @@ Always reference the study by its NCT ID: {study_id}"""
         if study_chat:
             reports = study_chat.get("reports", [])
             reports.append({
-                "type": "study_chat",
-                "content": full_report,
+                "condition": None,
+                "intervention": None,
+                "report": full_report,
                 "created_at": datetime.now().isoformat(),
-                "format": format_type,
+                "metadata": {
+                    "messages_count": len(messages),
+                    "study_id": study_id,
+                    "study_title": study_title,
+                    "report_type": "study_chat_report",
+                },
             })
             deps.study_chats_collection.update_one(query, {"$set": {"reports": reports}})
 
