@@ -77,6 +77,16 @@ app.include_router(agents.router,      prefix="/api",       tags=["Agents"])
 def health():
     return {"status": "ok"}
 
+@app.get("/kaithhealthcheck", tags=["Health"])
+def health_check_leapcell():
+    """Health check endpoint for Leapcell"""
+    return {"status": "healthy", "service": "clinical-chat-backend"}
+
+@app.get("/kaithheathcheck", tags=["Health"])  
+def health_check_leapcell_typo():
+    """Health check with typo for Leapcell compatibility"""
+    return {"status": "healthy", "service": "clinical-chat-backend"}
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -190,9 +190,10 @@ try:
         qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=5)
         try:
             info = qdrant_client.get_collection(QDRANT_COLLECTION_NAME)
-            print(f"✓ Qdrant Cloud connected: {info.vectors_count:,} vectors")
+            count = getattr(info, 'vectors_count', None) or getattr(info, 'points_count', 0) or 0
+            print(f"✓ Qdrant Cloud connected: {count:,} vectors in '{QDRANT_COLLECTION_NAME}'")
         except Exception as e:
-            print(f"⚠️  Qdrant collection not found: {e}")
+            print(f"⚠️  Qdrant collection '{QDRANT_COLLECTION_NAME}' not found: {e}")
             qdrant_client = None
     else:
         print("⚠️  Qdrant not configured (QDRANT_URL / QDRANT_API_KEY not set)")
