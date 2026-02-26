@@ -191,13 +191,14 @@ def _qdrant_search(filters: dict):
                 must.append(FieldCondition(key="interventions", match=MatchValue(value=iv)))
 
         search_filter = Filter(must=must) if must else None
-        search_results = deps.qdrant_client.search(
+        qr = deps.qdrant_client.query_points(
             collection_name=deps.QDRANT_COLLECTION_NAME,
-            query_vector=embedding,
+            query=embedding,
             query_filter=search_filter,
             limit=min(page * per_page + 100, 1000),
             with_payload=True,
         )
+        search_results = qr.points
         if not search_results:
             return {"total": 0, "page": page, "per_page": per_page, "total_pages": 0, "results": [], "searchType": "semantic-qdrant"}
 
