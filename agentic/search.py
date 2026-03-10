@@ -3,14 +3,10 @@ Agentic Search Enhancement System
 Multiple agents collaborate to refine and improve search queries
 """
 
-from openai import OpenAI
 import json
-from typing import List, Dict, Tuple
-import os
-from dotenv import load_dotenv
+from typing import Dict, List
 
-load_dotenv()
-openai_client = OpenAI()
+from agentic.common import call_json_completion
 
 # =============================================================================
 # SEARCH AGENT DEFINITIONS
@@ -41,18 +37,7 @@ Query: "{query}"
 Return ONLY valid JSON, no other text."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=500,
-            response_format={"type": "json_object"}
-        )
-
-        result = json.loads(response.choices[0].message.content)
+        result = call_json_completion(system_prompt, user_prompt, max_tokens=500)
         result['agent'] = 'Medical Terminology Agent'
         return result
 
@@ -96,18 +81,7 @@ Terminology Expansions:
 Return ONLY valid JSON, no other text."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=500,
-            response_format={"type": "json_object"}
-        )
-
-        result = json.loads(response.choices[0].message.content)
+        result = call_json_completion(system_prompt, user_prompt, max_tokens=500)
         result['agent'] = 'Search Strategy Agent'
         return result
 
@@ -139,7 +113,7 @@ def relevance_scoring_agent(query: str, results: List[Dict]) -> List[Dict]:
         }
         trial_summaries.append(summary)
 
-    system_prompt = f"""You are a clinical trials relevance expert. Given a search query and trial results, score each trial's relevance on a scale of 1-10 and provide confidence %.
+    system_prompt = """You are a clinical trials relevance expert. Given a search query and trial results, score each trial's relevance on a scale of 1-10 and provide confidence %.
 
 Consider:
 - Direct condition match (highest weight)
@@ -148,12 +122,12 @@ Consider:
 - Title clarity and specificity
 
 Output JSON format:
-{{
+{
     "scored_results": [
-        {{"index": 0, "relevance_score": 9, "confidence": 0.9, "reason": "Direct match for condition"}},
-        {{"index": 1, "relevance_score": 7, "confidence": 0.7, "reason": "Related intervention"}}
+        {"index": 0, "relevance_score": 9, "confidence": 0.9, "reason": "Direct match for condition"},
+        {"index": 1, "relevance_score": 7, "confidence": 0.7, "reason": "Related intervention"}
     ]
-}}"""
+}"""
 
     user_prompt = f"""Score these trials for relevance to the query:
 
@@ -165,18 +139,12 @@ Trials:
 Return ONLY valid JSON with scored_results, no other text."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
+        scoring_result = call_json_completion(
+            system_prompt,
+            user_prompt,
             temperature=0.2,
             max_tokens=800,
-            response_format={"type": "json_object"}
         )
-
-        scoring_result = json.loads(response.choices[0].message.content)
 
         # Apply scores to original results
         scored_results = top_results.copy()
@@ -212,7 +180,7 @@ def agentic_search_enhancement(query: str, initial_results: List[Dict] = None) -
     print("🔍 AGENTIC SEARCH ENHANCEMENT SYSTEM")
     print(f"{'='*70}")
     print(f"Original Query: '{query}'")
-    print(f"\nActivating search enhancement agents...\n")
+    print("\nActivating search enhancement agents...\n")
 
     # Agent 1: Terminology Expansion
     print("[1/2] 📚 Medical Terminology Agent analyzing...")
@@ -222,14 +190,14 @@ def agentic_search_enhancement(query: str, initial_results: List[Dict] = None) -
     # Agent 2: Search Strategy
     print("[2/2] 🎯 Search Strategy Agent optimizing...")
     strategy_result = search_strategy_agent(query, terminology_result)
-    print(f"      ✓ Strategy recommendations generated")
+    print("      ✓ Strategy recommendations generated")
 
     # Optional: Agent 3: Relevance Scoring (if results provided)
     reranked_results = None
     if initial_results and len(initial_results) > 0:
         print(f"\n[3/3] ⭐ Relevance Scoring Agent reranking {len(initial_results)} results...")
         reranked_results = relevance_scoring_agent(query, initial_results)
-        print(f"      ✓ Results reranked by relevance")
+        print("      ✓ Results reranked by relevance")
 
     print(f"\n{'='*70}")
     print("✨ Search enhancement complete!")

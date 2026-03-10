@@ -11,12 +11,13 @@ from openai import OpenAI
 from pymongo import MongoClient
 from tqdm import tqdm
 
+from services.embeddings import EMBEDDING_MODEL, build_embedding_text
+
 # Load environment variables
 load_dotenv()
 
 # Configuration
 BATCH_SIZE = 100  # Process trials in batches
-EMBEDDING_MODEL = "text-embedding-ada-002"
 
 # MongoDB connection
 MONGO_URI = os.getenv('MONGO_URI')
@@ -30,41 +31,6 @@ CHROMA_DATABASE = os.getenv('CHROMA_DATABASE', 'clinicalchat')
 
 # OpenAI
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
-def create_text_for_embedding(trial):
-    """Create a rich text representation of a trial for embedding"""
-    parts = []
-    
-    # NCT ID and title
-    nct_id = trial.get('nct_id', '')
-    title = trial.get('title', '')
-    if nct_id:
-        parts.append(f"NCT ID: {nct_id}")
-    if title:
-        parts.append(f"Title: {title}")
-    
-    # Conditions
-    conditions = trial.get('conditions', [])
-    if conditions:
-        parts.append(f"Conditions: {', '.join(conditions)}")
-    
-    # Interventions
-    interventions = trial.get('interventions', [])
-    if interventions:
-        parts.append(f"Interventions: {', '.join(interventions)}")
-    
-    # Status
-    status = trial.get('status', '')
-    if status:
-        parts.append(f"Status: {status}")
-    
-    # Summary/Description
-    summary = trial.get('summary', '') or trial.get('description', '')
-    if summary:
-        # Limit summary length to avoid token limits
-        parts.append(f"Summary: {summary[:1000]}")
-    
-    return '\n'.join(parts)
 
 
 def main():
@@ -92,7 +58,7 @@ def main():
     print(f"✓ ChromaDB Database: {CHROMA_DATABASE}")
     
     # Connect to MongoDB
-    print(f"\n[2/7] Connecting to MongoDB...")
+    print("\n[2/7] Connecting to MongoDB...")
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client[MONGO_DB_NAME]
     collection = db[MONGO_COLLECTION_NAME]
@@ -105,21 +71,21 @@ def main():
         return
     
     # Initialize OpenAI
-    print(f"\n[3/7] Initializing OpenAI...")
+    print("\n[3/7] Initializing OpenAI...")
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     print(f"✓ OpenAI client initialized (model: {EMBEDDING_MODEL})")
     
     # Connect to ChromaDB Cloud
-    print(f"\n[4/7] Connecting to ChromaDB Cloud...")
+    print("\n[4/7] Connecting to ChromaDB Cloud...")
     chroma_client = chromadb.CloudClient(
         api_key=CHROMA_API_KEY,
         tenant=CHROMA_TENANT,
         database=CHROMA_DATABASE
     )
-    print(f"✓ Connected to ChromaDB Cloud")
+    print("✓ Connected to ChromaDB Cloud")
     
     # Create or get collection
-    print(f"\n[5/7] Setting up collection...")
+    print("\n[5/7] Setting up collection...")
     collection_name = 'clinical_trials_embeddings'
     
     try:
@@ -143,7 +109,7 @@ def main():
         else:
             print("✓ Using existing collection (will skip duplicates)")
             
-    except Exception as e:
+    except Exception:
         # Collection doesn't exist, create it
         chroma_collection = chroma_client.create_collection(
             name=collection_name,
@@ -168,7 +134,7 @@ def main():
     try:
         existing_ids = set(chroma_collection.get()['ids'])
         print(f"Found {len(existing_ids)} existing embeddings (will skip)")
-    except:
+    except Exception:
         existing_ids = set()
     
     cursor = collection.find().batch_size(BATCH_SIZE)
@@ -193,7 +159,7 @@ def main():
                 continue
             
             # Create text for embedding
-            text = create_text_for_embedding(trial)
+            text = build_embedding_text(trial)
             
             # Prepare metadata (ChromaDB has field length limits)
             metadata = {
@@ -262,7 +228,7 @@ def main():
             pbar.update(len(batch_ids))
     
     # Final verification
-    print(f"\n[7/7] Verifying upload...")
+    print("\n[7/7] Verifying upload...")
     final_count = chroma_collection.count()
     
     print("\n" + "=" * 70)
@@ -275,7 +241,7 @@ def main():
         print(f"❌ Errors: {errors:,}")
     print(f"✓ Total in ChromaDB Cloud: {final_count:,}")
     print("\n✅ Your production vector database is ready!")
-    print(f"\nAdd these to your production environment:")
+    print("\nAdd these to your production environment:")
     print(f"  CHROMA_API_KEY={CHROMA_API_KEY[:10]}...")
     print(f"  CHROMA_TENANT={CHROMA_TENANT}")
     print(f"  CHROMA_DATABASE={CHROMA_DATABASE}")

@@ -3,14 +3,10 @@ Multi-Agent Protocol Comparison System
 Different agents compare protocols from specialized perspectives
 """
 
-from openai import OpenAI
 import json
-from typing import List, Dict
-import os
-from dotenv import load_dotenv
+from typing import Dict, List
 
-load_dotenv()
-openai_client = OpenAI()
+from agentic.common import call_text_completion
 
 # =============================================================================
 # COMPARISON AGENTS
@@ -45,16 +41,7 @@ Include at least 3 numeric comparisons (criteria counts, screening failure %, el
 Provide detailed comparison of eligibility approaches."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=800
-        )
-        return response.choices[0].message.content
+        return call_text_completion(system_prompt, user_prompt, max_tokens=800)
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -90,16 +77,7 @@ Provide clear comparative insights with numbers; rank trials for methodological 
 Focus on design methodology and quality."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=800
-        )
-        return response.choices[0].message.content
+        return call_text_completion(system_prompt, user_prompt, max_tokens=800)
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -135,16 +113,7 @@ Provide actionable insights with at least 3 numeric contrasts; rank endpoints se
 Focus on endpoint strategy and appropriateness."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=800
-        )
-        return response.choices[0].message.content
+        return call_text_completion(system_prompt, user_prompt, max_tokens=800)
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -187,16 +156,13 @@ Be strategic and forward-thinking; start with a “Key Metrics” snapshot (samp
     Provide strategic synthesis with actionable recommendations."""
 
     try:
-        response = openai_client.chat.completions.create(
+        return call_text_completion(
+            system_prompt,
+            user_prompt,
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
             temperature=0.4,
-            max_tokens=1200
+            max_tokens=1200,
         )
-        return response.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
 

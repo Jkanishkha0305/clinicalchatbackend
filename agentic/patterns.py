@@ -3,25 +3,8 @@ Design Pattern Discovery - Multi-Agent System
 Identifies recurring trial design patterns and trends across similar trials
 """
 
-from openai import OpenAI
-import os
-import re
-import markdown
-
-from db_utils import get_mongo_client
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# MongoDB connection
-DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
-COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
-
-try:
-    mongo_client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
-    db = mongo_client[DB_NAME]
-    collection = db[COLLECTION_NAME]
-except Exception as e:
-    raise RuntimeError(f"MongoDB Atlas connection failed: {str(e)}")
+from agentic.common import call_text_completion, render_formats
+from agentic.data import fetch_similar_trials
 
 # =============================================================================
 # AGENT DEFINITIONS
@@ -60,38 +43,6 @@ AGENTS = {
     }
 }
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def fetch_similar_trials(condition, phase=None, intervention_type=None, limit=50):
-    """Fetch similar trials from MongoDB - Works with simplified structure"""
-
-    query = {}
-
-    # Build conditions array for $and
-    and_conditions = []
-
-    # Condition search (case-insensitive, partial match)
-    if condition:
-        and_conditions.append({
-            '$or': [
-                {'conditions': {'$regex': condition, '$options': 'i'}},
-                {'title': {'$regex': condition, '$options': 'i'}}
-            ]
-        })
-
-    # Combine with $and if multiple conditions
-    if and_conditions:
-        if len(and_conditions) == 1:
-            query = and_conditions[0]
-        else:
-            query = {'$and': and_conditions}
-
-    trials = list(collection.find(query).limit(limit))
-    return trials
-
-
 def summarize_trials_for_analysis(trials):
     """Create a summary of trials for agent analysis"""
 
@@ -108,7 +59,6 @@ def summarize_trials_for_analysis(trials):
             protocol = trial.get('protocolSection', {})
             identification = protocol.get('identificationModule', {})
             design = protocol.get('designModule', {})
-            eligibility = protocol.get('eligibilityModule', {})
             arms = protocol.get('armsInterventionsModule', {})
             outcomes = protocol.get('outcomesModule', {})
 
@@ -134,17 +84,10 @@ def summarize_trials_for_analysis(trials):
             phase = trial_info['phase']
             summary["trials_by_phase"][phase] = summary["trials_by_phase"].get(phase, 0) + 1
 
-        except Exception as e:
+        except Exception:
             continue
 
     return summary
-
-
-def render_formats(raw_text: str):
-    """Return html and plain text variants for a model response."""
-    html = markdown.markdown(raw_text, extensions=["extra", "nl2br", "tables"])
-    plain = re.sub(r"<[^>]+>", "", html)
-    return html, plain
 
 
 def call_agent(agent_key, condition, phase, intervention_type, trials_summary):
@@ -176,17 +119,12 @@ Based on your expertise, provide (plain text, no HTML):
 
 Use short headings and bullet points. Include a mini “Key Metrics” bullet list summarizing the top numbers you cite."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a clinical trial design pattern expert."},
-            {"role": "user", "content": prompt}
-        ],
+    return call_text_completion(
+        "You are a clinical trial design pattern expert.",
+        prompt,
+        max_tokens=1500,
         temperature=0.4,
-        max_tokens=1500
     )
-
-    return response.choices[0].message.content
 
 
 def synthesize_strategic_insights(condition, phase, intervention_type, trials_summary, agent_analyses):
@@ -214,17 +152,12 @@ Provide a STRATEGIC DESIGN BLUEPRINT (plain text):
 
 Be strategic, actionable, and forward-thinking. Use headings and bullet points, no HTML. Start with a 2–3 bullet “Key Metrics” snapshot (phase distribution %, median enrollment, common design type)."""
 
-    response = client.chat.completions.create(
+    return call_text_completion(
+        "You are a Strategic Design Advisor providing blueprint-level guidance.",
+        prompt,
         model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a Strategic Design Advisor providing blueprint-level guidance."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,
-        max_tokens=2000
+        max_tokens=2000,
     )
-
-    return response.choices[0].message.content
 
 
 # =============================================================================
@@ -278,7 +211,7 @@ def design_pattern_discovery(condition, phase=None, intervention_type=None):
             })
 
         # Synthesize strategic insights
-        print(f"🧠 Strategic Advisor synthesizing...")
+        print("🧠 Strategic Advisor synthesizing...")
         strategic_insights_raw = synthesize_strategic_insights(
             condition, phase, intervention_type, trials_summary, agent_analyses
         )
@@ -325,7 +258,7 @@ if __name__ == "__main__":
         print(f"\nQuery: {result['query']}")
         print(f"\nTrials analyzed: {result['query']['trials_analyzed']}")
         print(f"\nNumber of agent analyses: {len(result['agent_analyses'])}")
-        print(f"\nStrategic Insights Preview:")
+        print("\nStrategic Insights Preview:")
         print(result['strategic_insights'][:500] + "...")
     else:
         print(f"\n❌ ERROR: {result['error']}")

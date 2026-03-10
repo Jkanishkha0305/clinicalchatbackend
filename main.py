@@ -11,11 +11,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
+from routers import agents, auth, chat, preferences, reports, search, sessions
 
 load_dotenv()
-
-# Import routers
-from routers import auth, search, chat, reports, sessions, preferences, agents
 
 
 @asynccontextmanager
@@ -59,7 +57,9 @@ def index(request: Request):
 
 @app.get("/agentic-demo", response_class=HTMLResponse)
 def agentic_demo(request: Request):
-    return templates.TemplateResponse("agentic_demo.html", {"request": request})
+    # The main UI already contains the agentic tools; keep this route alive
+    # without depending on a missing legacy template.
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────

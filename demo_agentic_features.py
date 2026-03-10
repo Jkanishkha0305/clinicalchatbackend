@@ -5,11 +5,10 @@ Run this to test all new agentic AI capabilities
 
 import os
 import requests
-import json
 
 from db_utils import get_mongo_client
 
-BASE_URL = "http://localhost:5033"
+BASE_URL = os.getenv("CLINICALCHAT_BASE_URL", "http://localhost:8081")
 DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
 COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
 
@@ -169,7 +168,7 @@ def main():
     print("  Clinical Trials Analysis with Multi-Agent Systems")
     print("="*70)
 
-    print("\n⚠️  Make sure the Flask app is running on http://localhost:5033")
+    print(f"\n⚠️  Make sure the FastAPI app is running on {BASE_URL}")
     print("⚠️  Make sure MongoDB is running with clinical trials data\n")
 
     input("Press Enter to start demos...")
@@ -196,8 +195,8 @@ def main():
         print("  • Advanced AI capabilities for clinical trials\n")
 
     except requests.exceptions.ConnectionError:
-        print("\n❌ Error: Cannot connect to Flask app")
-        print("Make sure app_simple.py is running on http://localhost:5033")
+        print("\n❌ Error: Cannot connect to ClinicalChat API")
+        print("Make sure `uvicorn main:app --reload --port 8081` is running or set CLINICALCHAT_BASE_URL.")
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
 

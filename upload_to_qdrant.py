@@ -13,12 +13,13 @@ from pymongo import MongoClient
 from tqdm import tqdm
 import uuid
 
+from services.embeddings import EMBEDDING_MODEL, build_embedding_text
+
 # Load environment variables
 load_dotenv()
 
 # Configuration
 BATCH_SIZE = 100  # Process trials in batches
-EMBEDDING_MODEL = "text-embedding-ada-002"
 EMBEDDING_DIMENSION = 1536  # OpenAI ada-002 dimension
 COLLECTION_NAME = "clinical_trials"
 
@@ -33,44 +34,6 @@ QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
 
 # OpenAI
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
-
-def create_text_for_embedding(trial):
-    """Create a rich text representation of a trial for embedding"""
-    parts = []
-    
-    # NCT ID and title
-    nct_id = trial.get('nct_id', '')
-    title = trial.get('title', '')
-    if nct_id:
-        parts.append(f"NCT ID: {nct_id}")
-    if title:
-        parts.append(f"Title: {title}")
-    
-    # Conditions
-    conditions = trial.get('conditions', [])
-    if conditions:
-        parts.append(f"Conditions: {', '.join(conditions)}")
-    
-    # Interventions
-    interventions = trial.get('interventions', [])
-    if interventions:
-        parts.append(f"Interventions: {', '.join(interventions)}")
-    
-    # Status
-    status = trial.get('status', '')
-    if status:
-        parts.append(f"Status: {status}")
-    
-    # Summary/Description
-    summary = trial.get('summary', '') or trial.get('description', '')
-    if summary:
-        # Limit summary length to avoid token limits
-        parts.append(f"Summary: {summary[:1000]}")
-    
-    return '\n'.join(parts)
-
-
 def main():
     print("=" * 70)
     print("Qdrant Cloud Upload Script - Clinical Trials Embeddings")
@@ -104,7 +67,7 @@ def main():
     print(f"✓ Collection name: {COLLECTION_NAME}")
     
     # Connect to MongoDB
-    print(f"\n[2/8] Connecting to MongoDB...")
+    print("\n[2/8] Connecting to MongoDB...")
     try:
         mongo_client = MongoClient(MONGO_URI)
         db = mongo_client[MONGO_DB_NAME]
@@ -121,7 +84,7 @@ def main():
         return
     
     # Initialize OpenAI
-    print(f"\n[3/8] Initializing OpenAI...")
+    print("\n[3/8] Initializing OpenAI...")
     try:
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
         print(f"✓ OpenAI client initialized (model: {EMBEDDING_MODEL})")
@@ -130,19 +93,19 @@ def main():
         return
     
     # Connect to Qdrant Cloud
-    print(f"\n[4/8] Connecting to Qdrant Cloud...")
+    print("\n[4/8] Connecting to Qdrant Cloud...")
     try:
         qdrant_client = QdrantClient(
             url=QDRANT_URL,
             api_key=QDRANT_API_KEY,
         )
-        print(f"✓ Connected to Qdrant Cloud")
+        print("✓ Connected to Qdrant Cloud")
     except Exception as e:
         print(f"❌ Qdrant connection failed: {str(e)}")
         return
     
     # Create or recreate collection
-    print(f"\n[5/8] Setting up Qdrant collection...")
+    print("\n[5/8] Setting up Qdrant collection...")
     try:
         # Check if collection exists
         collections = qdrant_client.get_collections().collections
@@ -189,7 +152,7 @@ def main():
         return
     
     # Calculate cost estimate
-    print(f"\n[6/8] Cost estimate...")
+    print("\n[6/8] Cost estimate...")
     estimated_cost = (total_trials / 1000) * 0.10  # $0.10 per 1000 embeddings
     print(f"Estimated OpenAI cost: ${estimated_cost:.2f}")
     print(f"Processing time: ~{(total_trials / 10):.0f} seconds")
@@ -218,7 +181,7 @@ def main():
         existing_ids = {point.payload.get('nct_id') for point in scroll_result[0] if point.payload.get('nct_id')}
         if existing_ids:
             print(f"Found {len(existing_ids)} existing vectors (will skip duplicates)")
-    except:
+    except Exception:
         existing_ids = set()
     
     cursor = collection.find().batch_size(BATCH_SIZE)
@@ -243,7 +206,7 @@ def main():
                 continue
             
             # Create text for embedding
-            text = create_text_for_embedding(trial)
+            text = build_embedding_text(trial)
             
             batch_texts.append(text)
             batch_nct_ids.append(nct_id)
@@ -330,7 +293,7 @@ def main():
             pbar.update(len(batch_texts))
     
     # Final verification
-    print(f"\n[8/8] Verifying upload...")
+    print("\n[8/8] Verifying upload...")
     try:
         collection_info = qdrant_client.get_collection(COLLECTION_NAME)
         final_count = collection_info.points_count  # Changed from vectors_count
@@ -344,8 +307,8 @@ def main():
         if errors > 0:
             print(f"❌ Errors: {errors:,}")
         print(f"✓ Total in Qdrant Cloud: {final_count:,}")
-        print(f"\n✅ Your Qdrant production vector database is ready!")
-        print(f"\nAdd these to your production environment:")
+        print("\n✅ Your Qdrant production vector database is ready!")
+        print("\nAdd these to your production environment:")
         print(f"  QDRANT_URL={QDRANT_URL}")
         print(f"  QDRANT_API_KEY={QDRANT_API_KEY[:10]}...")
         

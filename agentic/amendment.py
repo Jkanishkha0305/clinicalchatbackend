@@ -3,12 +3,7 @@ Amendment Risk Predictor - Multi-Agent System
 Predicts likelihood of protocol amendments based on design complexity
 """
 
-from openai import OpenAI
-import os
-import re
-import markdown
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+from agentic.common import call_text_completion, render_formats
 
 # =============================================================================
 # AGENT DEFINITIONS
@@ -95,17 +90,12 @@ Based on your expertise, provide (plain text, no HTML):
 
 Use short headings and bullet points. Include a “Key Metrics” bullet list with at least 3 numbers."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a clinical trial design expert analyzing amendment risk."},
-            {"role": "user", "content": prompt}
-        ],
+    return call_text_completion(
+        "You are a clinical trial design expert analyzing amendment risk.",
+        prompt,
+        max_tokens=1500,
         temperature=0.4,
-        max_tokens=1500
     )
-
-    return response.choices[0].message.content
 
 
 def synthesize_risk_assessment(trial_data, agent_analyses):
@@ -132,24 +122,12 @@ Provide an EXECUTIVE RISK ASSESSMENT (plain text):
 
 Be concise, actionable, and strategic. Use headings and bullet points, no HTML. Start with a “Key Metrics” mini-list (risk %, visit count, enrollment duration, dropout % if applicable)."""
 
-    response = client.chat.completions.create(
+    return call_text_completion(
+        "You are the Chief Risk Officer providing executive-level risk synthesis.",
+        prompt,
         model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are the Chief Risk Officer providing executive-level risk synthesis."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,
-        max_tokens=2000
+        max_tokens=2000,
     )
-
-    return response.choices[0].message.content
-
-
-def render_formats(raw_text: str):
-    """Return html and plain text variants for a model response."""
-    html = markdown.markdown(raw_text, extensions=["extra", "nl2br", "tables"])
-    plain = re.sub(r"<[^>]+>", "", html)
-    return html, plain
 
 
 # =============================================================================
@@ -194,7 +172,7 @@ def amendment_risk_analysis(trial_data):
             })
 
         # Synthesize with Chief Risk Officer
-        print(f"👔 Chief Risk Officer synthesizing...")
+        print("👔 Chief Risk Officer synthesizing...")
         risk_assessment_raw = synthesize_risk_assessment(trial_data, agent_analyses)
         risk_assessment_html, risk_assessment_text = render_formats(risk_assessment_raw)
 
@@ -263,7 +241,7 @@ if __name__ == "__main__":
         print("\n✅ SUCCESS!")
         print(f"\nTrial: {result['trial']['nct_id']}")
         print(f"\nNumber of agent analyses: {len(result['agent_analyses'])}")
-        print(f"\nRisk Assessment Preview:")
+        print("\nRisk Assessment Preview:")
         print(result['risk_assessment'][:500] + "...")
     else:
         print(f"\n❌ ERROR: {result['error']}")

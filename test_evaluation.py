@@ -10,6 +10,7 @@ from evaluation_module import (
     evaluate_all_reports
 )
 import json
+from pathlib import Path
 
 # Sample outputs for testing (replace with actual outputs from your agents)
 SAMPLE_AMENDMENT_OUTPUT = """
@@ -180,10 +181,10 @@ def test_batch_evaluation():
         grade = eval_data['overall_grade']
         print(f"  - {eval_data['report_type']}: {grade['grade']} ({grade['final_score']}/10) - {grade['status']}")
 
-    # Save to file for inspection
-    with open('/Users/j_kanishkha/ClinicalChat/evaluation_results.json', 'w') as f:
+    output_path = Path(__file__).with_name("evaluation_results.json")
+    with output_path.open("w") as f:
         json.dump(all_evals, f, indent=2)
-    print("\n>>> Full results saved to: evaluation_results.json")
+    print(f"\n>>> Full results saved to: {output_path}")
 
 def main():
     """Run all tests"""
@@ -203,7 +204,7 @@ def main():
     print("\nNext Steps:")
     print("1. Review evaluation_results.json for detailed scores")
     print("2. Replace sample outputs with your actual agent outputs")
-    print("3. Integrate evaluation endpoints into app_simple.py (see integration example)")
+    print("3. If needed, adapt the legacy evaluation endpoint notes from legacy/evaluation_endpoints.py")
     print("4. Track scores over time to monitor improvements")
     print("\n" + "="*80)
 

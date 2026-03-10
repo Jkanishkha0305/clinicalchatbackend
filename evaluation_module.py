@@ -4,14 +4,10 @@ Adapted from CTBench methodology for clinical trial analysis agents
 """
 
 import re
-import json
-from openai import OpenAI
 from datetime import datetime
 from typing import Dict, List, Tuple
-import os
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+from agentic.common import call_json_completion
 
 ############################ AUTOMATED METRICS ##############################
 
@@ -195,18 +191,14 @@ Please evaluate this report according to the criteria above."""
 def run_gpt4o_evaluation(system_prompt: str, user_prompt: str) -> Dict:
     """Run GPT-4o evaluation and return scores"""
     try:
-        response = client.chat.completions.create(
+        result = call_json_completion(
+            system_prompt,
+            user_prompt,
             model="gpt-4o",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
             temperature=0.0,
-            seed=42
+            seed=42,
+            max_tokens=None,
         )
-
-        result = json.loads(response.choices[0].message.content)
         return {
             'success': True,
             'evaluation': result

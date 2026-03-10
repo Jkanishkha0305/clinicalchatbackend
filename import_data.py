@@ -81,7 +81,7 @@ if batch:
 # Verify import
 final_count = collection.count_documents({})
 print(f"\n{'='*60}")
-print(f"✅ Import Complete!")
+print("✅ Import Complete!")
 print(f"{'='*60}")
 print(f"SQLite records: {total_count:,}")
 print(f"MongoDB documents: {final_count:,}")
@@ -93,7 +93,7 @@ else:
     print(f"⚠️  Warning: Count mismatch! Expected {imported:,} but got {final_count:,}")
 
 # Show sample document
-print(f"\n📄 Sample document structure:")
+print("\n📄 Sample document structure:")
 sample = collection.find_one()
 if sample:
     sample.pop('_id', None)  # Remove MongoDB ID for cleaner display

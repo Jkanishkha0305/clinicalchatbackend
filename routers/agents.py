@@ -1,5 +1,3 @@
-import markdown as md_lib
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -11,13 +9,15 @@ from models import (
     AgentConditionRequest,
     AddDocumentsRequest,
 )
+from services.rendering import render_markdown
+from services.trials import get_study_by_nct
 
 router = APIRouter()
 
 
 @router.post("/compare-trials")
 def compare_trials(body: CompareTrialsRequest):
-    from agentic_comparison import multi_agent_comparison
+    from agentic.comparison import multi_agent_comparison
 
     nct_ids = body.nctIds or []
     if not nct_ids or len(nct_ids) < 2:
@@ -25,7 +25,7 @@ def compare_trials(body: CompareTrialsRequest):
 
     trials = []
     for nct_id in nct_ids[:5]:
-        trial = deps.collection.find_one({"nct_id": nct_id})
+        trial = get_study_by_nct(deps.collection, nct_id)
         if trial:
             trials.append({k: v for k, v in trial.items() if k != "_id"})
 
@@ -37,10 +37,10 @@ def compare_trials(body: CompareTrialsRequest):
         result = multi_agent_comparison(trials)
 
         comparisons_html = {
-            key: md_lib.markdown(content, extensions=["extra", "nl2br"])
+            key: render_markdown(content)
             for key, content in result["comparisons"].items()
         }
-        synthesis_html = md_lib.markdown(result["strategic_synthesis"], extensions=["extra", "nl2br", "tables"])
+        synthesis_html = render_markdown(result["strategic_synthesis"], tables=True)
 
         return {
             "success": True,
@@ -56,7 +56,7 @@ def compare_trials(body: CompareTrialsRequest):
 
 @router.post("/agentic-search")
 def agentic_search(body: AgentSearchRequest):
-    from agentic_search import agentic_search_enhancement
+    from agentic.search import agentic_search_enhancement
 
     if not body.query:
         return JSONResponse({"error": "Query is required"}, status_code=400)
@@ -77,12 +77,12 @@ def agentic_search(body: AgentSearchRequest):
 
 @router.post("/multi-agent-analysis")
 def multi_agent_protocol_analysis(body: AgentNctRequest):
-    from agentic_analysis import multi_agent_analysis
+    from agentic.analysis import multi_agent_analysis
 
     if not body.nctId:
         return JSONResponse({"error": "NCT ID is required"}, status_code=400)
 
-    trial = deps.collection.find_one({"nct_id": body.nctId})
+    trial = get_study_by_nct(deps.collection, body.nctId)
     if not trial:
         return JSONResponse({"error": "Trial not found"}, status_code=404)
 
@@ -96,11 +96,11 @@ def multi_agent_protocol_analysis(body: AgentNctRequest):
             {
                 "agent": a["agent"],
                 "focus_areas": a["focus_areas"],
-                "content": md_lib.markdown(a["analysis"], extensions=["extra", "nl2br"]),
+                "content": render_markdown(a["analysis"]),
             }
             for a in result["agent_analyses"]
         ]
-        executive_html = md_lib.markdown(result["executive_summary"], extensions=["extra", "nl2br", "tables"])
+        executive_html = render_markdown(result["executive_summary"], tables=True)
 
         return {
             "success": True,
@@ -116,12 +116,12 @@ def multi_agent_protocol_analysis(body: AgentNctRequest):
 
 @router.post("/amendment-risk")
 def amendment_risk_prediction(body: AgentNctRequest):
-    from agentic_amendment import amendment_risk_analysis
+    from agentic.amendment import amendment_risk_analysis
 
     if not body.nctId:
         return JSONResponse({"error": "NCT ID is required"}, status_code=400)
 
-    trial = deps.collection.find_one({"nct_id": body.nctId})
+    trial = get_study_by_nct(deps.collection, body.nctId)
     if not trial:
         return JSONResponse({"error": "Trial not found"}, status_code=404)
 
@@ -171,7 +171,7 @@ def amendment_risk_prediction(body: AgentNctRequest):
 
 @router.post("/design-patterns")
 def design_pattern_discovery_endpoint(body: AgentConditionRequest):
-    from agentic_patterns import design_pattern_discovery
+    from agentic.patterns import design_pattern_discovery
 
     if not body.condition:
         return JSONResponse({"error": "Condition is required"}, status_code=400)
@@ -200,7 +200,7 @@ def design_pattern_discovery_endpoint(body: AgentConditionRequest):
 
 @router.post("/soa-composer")
 def soa_composer_endpoint(body: AgentConditionRequest):
-    from agentic_soa import soa_composer
+    from agentic.soa import soa_composer
 
     if not body.condition:
         return JSONResponse({"error": "Condition is required"}, status_code=400)

@@ -3,21 +3,13 @@ Shared client singletons for the FastAPI application.
 Imported by routers — all clients are initialised at module load time.
 """
 import os
-import json
-import re
-import shutil
+
 import tiktoken
-import markdown
-import bcrypt
-import secrets
-from datetime import datetime
+from db_utils import get_mongo_client
 from dotenv import load_dotenv
 from openai import OpenAI
-from pymongo import MongoClient
 
 load_dotenv()
-
-from db_utils import get_mongo_client
 
 # =============================================================================
 # TOKEN COUNTING
@@ -78,7 +70,7 @@ if not openai_key:
     raise RuntimeError("OpenAI API key is required. Set OPENAI_API_KEY in .env")
 
 openai_client = OpenAI()
-print(f"✓ OpenAI client initialised")
+print("✓ OpenAI client initialised")
 
 # =============================================================================
 # GEMINI (optional)
@@ -180,7 +172,6 @@ QDRANT_COLLECTION_NAME = 'clinical_trials'
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 
     qdrant_url = os.getenv('QDRANT_URL')
     qdrant_api_key = os.getenv('QDRANT_API_KEY')
@@ -245,51 +236,3 @@ def call_llm(model_name, system_message, user_message, max_tokens=2000):
 
     else:
         raise Exception(f"Unknown model: {model_name}")
-
-
-def build_query_from_filters(filters: dict) -> dict:
-    """Build MongoDB query from search filters."""
-    query = {}
-    if filters.get('condition'):
-        query['conditions'] = {'$regex': filters['condition'], '$options': 'i'}
-    intervention = filters.get('intervention')
-    if intervention:
-        if isinstance(intervention, str):
-            intervention = [i.strip() for i in intervention.split(',') if i.strip()]
-        if isinstance(intervention, list) and intervention:
-            query['interventions'] = {'$in': intervention}
-    if filters.get('status') and len(filters['status']) > 0:
-        query['status'] = {'$in': filters['status']}
-    if filters.get('title'):
-        query['title'] = {'$regex': filters['title'], '$options': 'i'}
-    if filters.get('nctId'):
-        query['nct_id'] = filters['nctId'].upper()
-    return query
-
-
-def format_study(result: dict) -> dict:
-    """Convert flat MongoDB study doc to the nested format the frontend expects."""
-    result['_id'] = str(result['_id'])
-    return {
-        'protocolSection': {
-            'identificationModule': {
-                'nctId': result.get('nct_id', 'N/A'),
-                'briefTitle': result.get('title', 'No title')
-            },
-            'statusModule': {'overallStatus': result.get('status', 'UNKNOWN')},
-            'designModule': {'studyType': 'INTERVENTIONAL', 'phases': []},
-            'sponsorCollaboratorsModule': {'leadSponsor': {'name': 'N/A'}}
-        },
-        'hasResults': False,
-        '_original': result
-    }
-
-
-NCT_LINK_RE = re.compile(r'(NCT\d{8})')
-NCT_LINK_REPLACE = r'<a href="https://clinicaltrials.gov/study/\1" target="_blank" style="color:#4f46e5;text-decoration:underline;">\1</a>'
-
-
-def render_report_html(raw_markdown: str) -> str:
-    """Convert markdown report to HTML with NCT ID links."""
-    html = markdown.markdown(raw_markdown, extensions=['extra', 'nl2br', 'tables'])
-    return NCT_LINK_RE.sub(NCT_LINK_REPLACE, html)

@@ -1,7 +1,7 @@
 """
 Generate embeddings for clinical trials and store in ChromaDB
 This script processes all trials in MongoDB and creates vector embeddings for semantic search
-Uses OpenAI embeddings (text-embedding-ada-002) for high-quality embeddings
+Uses OpenAI embeddings for high-quality embeddings
 """
 
 import os
@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import time
 
 from db_utils import get_mongo_client
+from services.embeddings import EMBEDDING_MODEL, build_embedding_text
 
 # Load environment variables
 load_dotenv()
@@ -35,41 +36,6 @@ openai_client = OpenAI()
 # MAIN PROCESS
 # =============================================================================
 
-def create_text_for_embedding(trial):
-    """Create a rich text representation of a trial for embedding"""
-    parts = []
-
-    # Title (most important)
-    if trial.get('title'):
-        parts.append(f"Title: {trial['title']}")
-
-    # Conditions
-    if trial.get('conditions'):
-        conditions = trial['conditions']
-        if isinstance(conditions, list):
-            parts.append(f"Conditions: {', '.join(conditions)}")
-        else:
-            parts.append(f"Conditions: {conditions}")
-
-    # Interventions
-    if trial.get('interventions'):
-        interventions = trial['interventions']
-        if isinstance(interventions, list):
-            parts.append(f"Interventions: {', '.join(interventions)}")
-        else:
-            parts.append(f"Interventions: {interventions}")
-
-    # Summary (truncated to avoid too much text)
-    if trial.get('summary'):
-        summary = trial['summary'][:500]  # Limit to 500 chars
-        parts.append(f"Summary: {summary}")
-
-    # Status
-    if trial.get('status'):
-        parts.append(f"Status: {trial['status']}")
-
-    return " | ".join(parts)
-
 
 def main():
     print("=" * 70)
@@ -86,9 +52,9 @@ def main():
     print(f"✓ Connected. Found {total_trials:,} trials")
 
     # Step 2: Initialize OpenAI client
-    print(f"\n[2/5] Initializing OpenAI embeddings API")
-    print("Using text-embedding-ada-002 (1536 dimensions)")
-    print(f"✓ OpenAI client ready")
+    print("\n[2/5] Initializing OpenAI embeddings API")
+    print(f"Using {EMBEDDING_MODEL} (1536 dimensions)")
+    print("✓ OpenAI client ready")
 
     # Step 3: Initialize ChromaDB
     print(f"\n[3/5] Initializing ChromaDB at: {CHROMADB_PATH}")
@@ -98,7 +64,7 @@ def main():
     try:
         chroma_client.delete_collection(name=COLLECTION_NAME_CHROMA)
         print("✓ Deleted existing collection")
-    except:
+    except Exception:
         pass
 
     # Create new collection
@@ -127,7 +93,7 @@ def main():
             nct_id = trial.get('nct_id', str(trial['_id']))
 
             # Create text for embedding
-            text = create_text_for_embedding(trial)
+            text = build_embedding_text(trial, max_summary_chars=500)
 
             # Create metadata (store key info for retrieval)
             metadata = {
@@ -144,7 +110,7 @@ def main():
 
         # Generate embeddings using OpenAI
         response = openai_client.embeddings.create(
-            model="text-embedding-ada-002",
+            model=EMBEDDING_MODEL,
             input=texts
         )
         embeddings = [item.embedding for item in response.data]
@@ -168,7 +134,7 @@ def main():
 
     # Generate embedding for test query
     query_response = openai_client.embeddings.create(
-        model="text-embedding-ada-002",
+        model=EMBEDDING_MODEL,
         input=[test_query]
     )
     query_embedding = query_response.data[0].embedding

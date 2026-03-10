@@ -3,14 +3,10 @@ Multi-Agent Protocol Analysis System
 Each agent specializes in different aspects of clinical trial analysis
 """
 
-from openai import OpenAI
 import json
 from typing import List, Dict
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-openai_client = OpenAI()
+from agentic.common import call_text_completion
 
 # =============================================================================
 # AGENT DEFINITIONS
@@ -116,20 +112,15 @@ TRIAL DATA:
 Provide your specialized analysis."""
 
     try:
-        response = openai_client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=800
-        )
-
         return {
             "agent": agent['name'],
             "agent_key": agent_key,
-            "analysis": response.choices[0].message.content,
+            "analysis": call_text_completion(
+                system_prompt,
+                user_prompt,
+                model=model,
+                max_tokens=800,
+            ),
             "focus_areas": agent['focus']
         }
     except Exception as e:
@@ -177,17 +168,13 @@ Title: {trial_data.get('title', 'N/A')}
 Synthesize these perspectives into a comprehensive executive summary with strategic recommendations."""
 
     try:
-        response = openai_client.chat.completions.create(
+        return call_text_completion(
+            system_prompt,
+            user_prompt,
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
             temperature=0.4,
-            max_tokens=1500
+            max_tokens=1500,
         )
-
-        return response.choices[0].message.content
     except Exception as e:
         return f"Coordination error: {str(e)}"
 
@@ -222,7 +209,7 @@ def multi_agent_analysis(trial_data: Dict, parallel: bool = True) -> Dict:
         print(f"[{i}/{len(AGENTS)}] 🔍 {agent_info['name']} analyzing...")
         analysis = call_agent(agent_key, trial_data, model="gpt-4o-mini")
         agent_analyses.append(analysis)
-        print(f"      ✓ Analysis complete")
+        print("      ✓ Analysis complete")
 
     print(f"\n{'='*70}")
     print("👔 Chief Strategist synthesizing team insights...")

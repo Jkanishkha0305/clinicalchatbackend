@@ -3,26 +3,8 @@ Schedule of Assessments (SoA) Composer - Multi-Agent System
 Generates draft SoA based on similar trial patterns
 """
 
-from openai import OpenAI
-import os
-import re
-import markdown
-import json
-
-from db_utils import get_mongo_client
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# MongoDB connection
-DB_NAME = os.getenv("MONGO_DB_NAME", "clinical_trials")
-COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "studies")
-
-try:
-    mongo_client = get_mongo_client(serverSelectionTimeoutMS=5000, connectTimeoutMS=5000)
-    db = mongo_client[DB_NAME]
-    collection = db[COLLECTION_NAME]
-except Exception as e:
-    raise RuntimeError(f"MongoDB Atlas connection failed: {str(e)}")
+from agentic.common import call_text_completion, render_formats
+from agentic.data import fetch_similar_trials
 
 # =============================================================================
 # AGENT DEFINITIONS
@@ -71,38 +53,6 @@ AGENTS = {
     }
 }
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def fetch_similar_trials(condition, phase=None, intervention_type=None, limit=30):
-    """Fetch similar trials from MongoDB - Works with simplified structure"""
-
-    query = {}
-
-    # Build conditions array for $and
-    and_conditions = []
-
-    # Condition search (case-insensitive, partial match)
-    if condition:
-        and_conditions.append({
-            '$or': [
-                {'conditions': {'$regex': condition, '$options': 'i'}},
-                {'title': {'$regex': condition, '$options': 'i'}}
-            ]
-        })
-
-    # Combine with $and if multiple conditions
-    if and_conditions:
-        if len(and_conditions) == 1:
-            query = and_conditions[0]
-        else:
-            query = {'$and': and_conditions}
-
-    trials = list(collection.find(query).limit(limit))
-    return trials
-
-
 def extract_outcome_timeframes(trials):
     """Extract outcome measure timeframes from similar trials"""
 
@@ -132,15 +82,6 @@ def extract_outcome_timeframes(trials):
             continue
 
     return timeframes
-
-
-def render_formats(raw_text: str):
-    """Return html and plain text variants for a model response."""
-    html = markdown.markdown(raw_text, extensions=["extra", "nl2br", "tables"])
-    plain = re.sub(r"<[^>]+>", "", html)
-    return html, plain
-
-
 def summarize_trials_for_soa(trials):
     """Summarize trials for SoA generation"""
 
@@ -205,17 +146,12 @@ Based on your expertise, provide (plain text, no HTML):
 
 Use headings and bullet points. Include a compact “Key Metrics” list (visit count, total hours, key assessment frequencies)."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a Schedule of Assessments design expert."},
-            {"role": "user", "content": prompt}
-        ],
+    return call_text_completion(
+        "You are a Schedule of Assessments design expert.",
+        prompt,
+        max_tokens=1500,
         temperature=0.4,
-        max_tokens=1500
     )
-
-    return response.choices[0].message.content
 
 
 def synthesize_soa(condition, phase, intervention_type, trials_summary, agent_analyses):
@@ -248,17 +184,12 @@ Create a COMPREHENSIVE DRAFT SOA (plain text):
 
 Provide clear headings and bullet points. No HTML or tables in the output. Start with a “Key Metrics” snapshot (visit count, total hours, primary assessment frequency)."""
 
-    response = client.chat.completions.create(
+    return call_text_completion(
+        "You are the Chief SoA Architect creating comprehensive visit schedules.",
+        prompt,
         model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are the Chief SoA Architect creating comprehensive visit schedules."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,
-        max_tokens=3000
+        max_tokens=3000,
     )
-
-    return response.choices[0].message.content
 
 
 # =============================================================================
@@ -312,7 +243,7 @@ def soa_composer(condition, phase=None, intervention_type=None):
             })
 
         # Synthesize complete SoA
-        print(f"📋 Chief SoA Architect composing schedule...")
+        print("📋 Chief SoA Architect composing schedule...")
         complete_soa_raw = synthesize_soa(
             condition, phase, intervention_type, trials_summary, agent_analyses
         )
@@ -359,7 +290,7 @@ if __name__ == "__main__":
         print(f"\nQuery: {result['query']}")
         print(f"\nTrials analyzed: {result['query']['trials_analyzed']}")
         print(f"\nNumber of agent analyses: {len(result['agent_analyses'])}")
-        print(f"\nComplete SoA Preview:")
+        print("\nComplete SoA Preview:")
         print(result['complete_soa'][:800] + "...")
     else:
         print(f"\n❌ ERROR: {result['error']}")
